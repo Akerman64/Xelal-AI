@@ -1,0 +1,15 @@
+services:
+  - type: web
+    name: xelal-ai-api
+    runtime: node
+    plan: starter
+    buildCommand: npm install && npm run prisma:generate && npm run backend:build
+    startCommand: npm run backend:start
+    autoDeploy: true
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: BACKEND_PORT
+        value: "10000"
+      - key: APP_NAME
+        value: Xelal AI API

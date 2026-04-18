@@ -15,13 +15,14 @@ const getAI = () => {
   return aiInstance;
 };
 
-export const analyzeStudentPerformance = async (student: Student) => {
+export const analyzeStudentPerformance = async (student: Student, extraPrompt?: string) => {
   const ai = getAI();
   if (!ai) {
     return {
       summary: "L'analyse IA est désactivée. Veuillez configurer la clé API Gemini.",
       riskLevel: 'low',
       recommendations: ["Assurer un suivi régulier des notes."],
+      explanation: "Mode sans IA active.",
     };
   }
 
@@ -30,6 +31,7 @@ export const analyzeStudentPerformance = async (student: Student) => {
     Nom: ${student.name}
     Notes: ${JSON.stringify(student.grades)}
     Absences: ${JSON.stringify(student.attendance)}
+    Consigne complémentaire de l'enseignant: ${extraPrompt || "Aucune"}
 
     Fournis une analyse structurée en JSON avec les champs suivants:
     - summary (string): Résumé de la situation actuelle
@@ -56,6 +58,79 @@ export const analyzeStudentPerformance = async (student: Student) => {
       summary: "Erreur lors de l'analyse IA.",
       riskLevel: 'medium',
       recommendations: ["Vérifier les données manuellement."],
+      explanation: "La génération IA a échoué.",
+    };
+  }
+};
+
+export const analyzeClassPerformance = async (
+  className: string,
+  students: Student[],
+  extraPrompt?: string,
+) => {
+  const ai = getAI();
+  const classSummary = students.map((student) => ({
+    name: student.name,
+    average:
+      student.grades.length > 0
+        ? Number(
+            (
+              student.grades.reduce((sum, grade) => sum + grade.value, 0) /
+              student.grades.length
+            ).toFixed(1),
+          )
+        : null,
+    absences: student.attendance.filter((item) => item.status === "absent").length,
+    lateCount: student.attendance.filter((item) => item.status === "late").length,
+    latestGrades: student.grades.slice(-3),
+  }));
+
+  if (!ai) {
+    return {
+      summary: `Analyse de classe indisponible pour ${className}.`,
+      riskLevel: "medium",
+      recommendations: [
+        "Planifier une révision ciblée sur les notions les moins acquises.",
+        "Contacter les parents des élèves les plus fragiles.",
+        "Prévoir un suivi court en début de semaine prochaine.",
+      ],
+      explanation: "Mode sans IA active.",
+    };
+  }
+
+  const prompt = `
+    En tant qu'assistant pédagogique intelligent pour une école au Sénégal, analyse la classe suivante:
+    Classe: ${className}
+    Effectif analysé: ${students.length}
+    Synthèse des élèves: ${JSON.stringify(classSummary)}
+    Consigne complémentaire de l'enseignant: ${extraPrompt || "Aucune"}
+
+    Fournis une analyse structurée en JSON avec les champs suivants:
+    - summary (string): Résumé global de la classe
+    - riskLevel (string: 'low', 'medium', 'high'): Niveau de vigilance global
+    - recommendations (string[]): 3 à 5 actions concrètes pour l'enseignant ou l'équipe pédagogique
+    - explanation (string): Pourquoi cette analyse ?
+
+    Réponds uniquement en JSON.
+  `;
+
+  try {
+    const response = await ai.models.generateContent({
+      model: "gemini-3-flash-preview",
+      contents: prompt,
+      config: {
+        responseMimeType: "application/json",
+      },
+    });
+
+    return JSON.parse(response.text || "{}");
+  } catch (error) {
+    console.error("AI Class Analysis Error:", error);
+    return {
+      summary: "Erreur lors de l'analyse IA de la classe.",
+      riskLevel: "medium",
+      recommendations: ["Vérifier les résultats et absences de la classe manuellement."],
+      explanation: "La génération IA a échoué.",
     };
   }
 };

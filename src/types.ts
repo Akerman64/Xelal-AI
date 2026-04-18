@@ -4,6 +4,7 @@
  */
 
 export type Role = 'teacher' | 'admin' | 'student' | 'parent';
+export type AccountStatus = 'PENDING' | 'ACTIVE' | 'SUSPENDED';
 
 export interface User {
   id: string;
@@ -61,4 +62,21 @@ export interface AIAnalysis {
   riskLevel: 'low' | 'medium' | 'high';
   recommendations: string[];
   timestamp: string;
+}
+
+export interface AuthUser {
+  id: string;
+  firstName: string;
+  lastName: string;
+  email: string;
+  role: Role;
+  status: AccountStatus;
+  classId?: string;
+  phone?: string;
+}
+
+export interface AuthSession {
+  accessToken: string;
+  tokenType: 'Bearer';
+  user: AuthUser;
 }

@@ -1,0 +1,351 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model School {
+  id            String         @id @default(cuid())
+  name          String
+  country       String?
+  timezone      String         @default("Africa/Dakar")
+  academicYears AcademicYear[]
+  classes       Class[]
+  subjects      Subject[]
+  users         User[]
+  createdAt     DateTime       @default(now())
+  updatedAt     DateTime       @updatedAt
+}
+
+model User {
+  id             String            @id @default(cuid())
+  schoolId       String
+  role           Role
+  firstName      String
+  lastName       String
+  phone          String?           @unique
+  email          String?           @unique
+  passwordHash   String?
+  status         UserStatus        @default(PENDING)
+  mustChangePassword Boolean       @default(false)
+  school         School            @relation(fields: [schoolId], references: [id])
+  invitations    Invitation[]
+  studentProfile Student?
+  teacherProfile Teacher?
+  createdAt      DateTime          @default(now())
+  updatedAt      DateTime          @updatedAt
+
+  @@index([schoolId, role])
+}
+
+model Invitation {
+  id         String           @id @default(cuid())
+  schoolId   String
+  userId     String
+  email      String
+  role       Role
+  code       String
+  status     InvitationStatus @default(PENDING)
+  expiresAt  DateTime
+  createdAt  DateTime         @default(now())
+  acceptedAt DateTime?
+  user       User             @relation(fields: [userId], references: [id])
+
+  @@index([schoolId, email])
+  @@index([userId, status])
+}
+
+model Student {
+  id            String             @id @default(cuid())
+  userId        String             @unique
+  matricule     String?            @unique
+  birthDate     DateTime?
+  gender        Gender?
+  user          User               @relation(fields: [userId], references: [id])
+  enrollments   StudentEnrollment[]
+  grades        Grade[]
+  attendances   AttendanceRecord[]
+  analyses      AIAnalysis[]
+  teacherRecommendations TeacherRecommendation[]
+  parentLinks   ParentStudent[]
+  createdAt     DateTime           @default(now())
+  updatedAt     DateTime           @updatedAt
+}
+
+model Teacher {
+  id          String              @id @default(cuid())
+  userId      String              @unique
+  employeeCode String?
+  user        User                @relation(fields: [userId], references: [id])
+  assignments TeacherAssignment[]
+  createdAt   DateTime            @default(now())
+  updatedAt   DateTime            @updatedAt
+}
+
+model ParentStudent {
+  id           String       @id @default(cuid())
+  parentUserId String
+  studentId    String
+  relationship Relationship
+  isPrimary    Boolean      @default(false)
+  student      Student      @relation(fields: [studentId], references: [id])
+
+  @@index([parentUserId])
+  @@index([studentId])
+}
+
+model AcademicYear {
+  id        String    @id @default(cuid())
+  schoolId  String
+  name      String
+  startDate DateTime
+  endDate   DateTime
+  isActive  Boolean   @default(false)
+  school    School    @relation(fields: [schoolId], references: [id])
+  classes   Class[]
+  terms     Term[]
+  createdAt DateTime  @default(now())
+  updatedAt DateTime  @updatedAt
+
+  @@index([schoolId, isActive])
+}
+
+model Term {
+  id             String       @id @default(cuid())
+  academicYearId String
+  name           String
+  startDate      DateTime
+  endDate        DateTime
+  orderIndex     Int
+  academicYear   AcademicYear @relation(fields: [academicYearId], references: [id])
+  assessments    Assessment[]
+
+  @@index([academicYearId, orderIndex])
+}
+
+model Class {
+  id             String              @id @default(cuid())
+  schoolId       String
+  academicYearId String
+  name           String
+  level          String?
+  stream         String?
+  school         School              @relation(fields: [schoolId], references: [id])
+  academicYear   AcademicYear        @relation(fields: [academicYearId], references: [id])
+  enrollments    StudentEnrollment[]
+  assignments    TeacherAssignment[]
+  assessments    Assessment[]
+  attendanceSessions AttendanceSession[]
+  teacherRecommendations TeacherRecommendation[]
+  createdAt      DateTime            @default(now())
+  updatedAt      DateTime            @updatedAt
+
+  @@index([schoolId, academicYearId])
+}
+
+model StudentEnrollment {
+  id             String           @id @default(cuid())
+  studentId      String
+  classId        String
+  academicYearId String
+  status         EnrollmentStatus @default(ACTIVE)
+  student        Student          @relation(fields: [studentId], references: [id])
+  class          Class            @relation(fields: [classId], references: [id])
+
+  @@unique([studentId, classId, academicYearId])
+  @@index([classId])
+}
+
+model Subject {
+  id                 String              @id @default(cuid())
+  schoolId           String
+  name               String
+  code               String?
+  coefficientDefault Float               @default(1)
+  school             School              @relation(fields: [schoolId], references: [id])
+  assignments        TeacherAssignment[]
+  assessments        Assessment[]
+  attendanceSessions AttendanceSession[]
+  createdAt          DateTime            @default(now())
+  updatedAt          DateTime            @updatedAt
+
+  @@index([schoolId])
+}
+
+model TeacherAssignment {
+  id        String   @id @default(cuid())
+  teacherId String
+  classId   String
+  subjectId String
+  teacher   Teacher  @relation(fields: [teacherId], references: [id])
+  class     Class    @relation(fields: [classId], references: [id])
+  subject   Subject  @relation(fields: [subjectId], references: [id])
+
+  @@unique([teacherId, classId, subjectId])
+}
+
+model Assessment {
+  id          String         @id @default(cuid())
+  classId      String
+  subjectId    String
+  teacherId    String
+  termId       String
+  title        String
+  type         AssessmentType
+  coefficient  Float          @default(1)
+  date         DateTime
+  class        Class          @relation(fields: [classId], references: [id])
+  subject      Subject        @relation(fields: [subjectId], references: [id])
+  term         Term           @relation(fields: [termId], references: [id])
+  grades       Grade[]
+
+  @@index([classId, subjectId, date])
+}
+
+model Grade {
+  id           String   @id @default(cuid())
+  assessmentId String
+  studentId     String
+  value         Float
+  comment       String?
+  assessment    Assessment @relation(fields: [assessmentId], references: [id])
+  student       Student    @relation(fields: [studentId], references: [id])
+  createdAt     DateTime   @default(now())
+  updatedAt     DateTime   @updatedAt
+
+  @@unique([assessmentId, studentId])
+  @@index([studentId, createdAt])
+}
+
+model AttendanceSession {
+  id        String   @id @default(cuid())
+  classId   String
+  subjectId String?
+  teacherId String
+  date      DateTime
+  startTime DateTime?
+  endTime   DateTime?
+  class     Class    @relation(fields: [classId], references: [id])
+  subject   Subject? @relation(fields: [subjectId], references: [id])
+  records   AttendanceRecord[]
+
+  @@index([classId, date])
+}
+
+model AttendanceRecord {
+  id         String           @id @default(cuid())
+  sessionId  String
+  studentId  String
+  status     AttendanceStatus
+  reason     String?
+  minutesLate Int?
+  session    AttendanceSession @relation(fields: [sessionId], references: [id])
+  student    Student           @relation(fields: [studentId], references: [id])
+  createdAt  DateTime          @default(now())
+
+  @@unique([sessionId, studentId])
+  @@index([studentId, createdAt])
+}
+
+model AIAnalysis {
+  id            String       @id @default(cuid())
+  studentId      String
+  analysisType   AnalysisType
+  riskLevel      RiskLevel?
+  inputSnapshot  Json
+  output         Json
+  student        Student      @relation(fields: [studentId], references: [id])
+  createdAt      DateTime     @default(now())
+
+  @@index([studentId, createdAt])
+}
+
+model TeacherRecommendation {
+  id              String              @id @default(cuid())
+  teacherId       String
+  studentId       String?
+  classId         String?
+  scope           RecommendationScope
+  riskLevel       RiskLevel?
+  summary         String
+  explanation     String?
+  prompt          String?
+  recommendations Json
+  student         Student?            @relation(fields: [studentId], references: [id])
+  class           Class?              @relation(fields: [classId], references: [id])
+  createdAt       DateTime            @default(now())
+
+  @@index([teacherId, createdAt])
+  @@index([studentId, createdAt])
+  @@index([classId, createdAt])
+}
+
+enum Role {
+  ADMIN
+  TEACHER
+  STUDENT
+  PARENT
+}
+
+enum UserStatus {
+  PENDING
+  ACTIVE
+  SUSPENDED
+}
+
+enum InvitationStatus {
+  PENDING
+  ACCEPTED
+  EXPIRED
+}
+
+enum Gender {
+  MALE
+  FEMALE
+}
+
+enum Relationship {
+  MOTHER
+  FATHER
+  TUTOR
+}
+
+enum EnrollmentStatus {
+  ACTIVE
+  TRANSFERRED
+  SUSPENDED
+}
+
+enum AssessmentType {
+  QUIZ
+  HOMEWORK
+  EXAM
+  PROJECT
+}
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+  LATE
+}
+
+enum AnalysisType {
+  RISK
+  PERFORMANCE
+  RECOMMENDATION
+  PARENT_SUMMARY
+}
+
+enum RiskLevel {
+  LOW
+  MEDIUM
+  HIGH
+}
+
+enum RecommendationScope {
+  STUDENT
+  CLASS
+}
