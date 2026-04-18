@@ -5,15 +5,6 @@ import { notificationsService } from "../notifications/service";
 import { schoolRepository } from "../core/school-repository";
 import { messagesService } from "./messages-service";
 
-const scheduleTemplate = [
-  { day: "Lundi", startTime: "08:00", endTime: "10:00", room: "Salle A1" },
-  { day: "Lundi", startTime: "10:30", endTime: "12:30", room: "Salle A1" },
-  { day: "Mardi", startTime: "08:00", endTime: "10:00", room: "Salle B2" },
-  { day: "Mercredi", startTime: "14:00", endTime: "16:00", room: "Salle B2" },
-  { day: "Jeudi", startTime: "08:30", endTime: "10:30", room: "Salle A3" },
-  { day: "Vendredi", startTime: "11:00", endTime: "13:00", room: "Salle A3" },
-];
-
 export class TeacherError extends Error {
   statusCode: number;
 
@@ -30,10 +21,6 @@ function toRiskLevel(value?: string) {
     return candidate;
   }
   return "MEDIUM";
-}
-
-function buildLessonId(index: number, classId: string, subjectId: string) {
-  return `lesson_${classId}_${subjectId}_${index}`;
 }
 
 function average(values: number[]) {
@@ -172,19 +159,27 @@ async function computeClassRiskSignals(classId: string) {
 
 async function buildTeacherSchedule(teacherId: string) {
   if (!isPrismaEnabled()) {
-    const assignments = devStore.teacherAssignments.filter((a) => a.teacherId === teacherId);
-    const lessons = assignments.map((assignment, index) => {
-      const classRecord = devStore.classes.find((c) => c.id === assignment.classId);
-      const subject = devStore.subjects.find((s) => s.id === assignment.subjectId);
-      const template = scheduleTemplate[index % scheduleTemplate.length];
+    const slots = devStore.timeSlots.filter((s) => s.teacherId === teacherId);
+    const lessons = slots.map((slot) => {
+      const classRecord = devStore.classes.find((c) => c.id === slot.classId);
+      const subject = devStore.subjects.find((s) => s.id === slot.subjectId);
       return {
-        id: buildLessonId(index, assignment.classId, assignment.subjectId),
-        classId: assignment.classId,
-        className: classRecord?.name ?? assignment.classId,
-        subjectId: assignment.subjectId,
-        subjectName: subject?.name ?? assignment.subjectId,
-        ...template,
+        id: slot.id,
+        classId: slot.classId,
+        className: classRecord?.name ?? slot.classId,
+        subjectId: slot.subjectId,
+        subjectName: subject?.name ?? slot.subjectId,
+        day: slot.day,
+        startTime: slot.startTime,
+        endTime: slot.endTime,
+        room: slot.room ?? "",
       };
+    });
+
+    const dayOrder = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"];
+    lessons.sort((a, b) => {
+      const di = dayOrder.indexOf(a.day) - dayOrder.indexOf(b.day);
+      return di !== 0 ? di : a.startTime.localeCompare(b.startTime);
     });
 
     return {
@@ -203,21 +198,10 @@ async function buildTeacherSchedule(teacherId: string) {
     orderBy: [{ class: { name: "asc" } }, { subject: { name: "asc" } }],
   });
 
-  const lessons = assignments.map((assignment, index) => {
-    const template = scheduleTemplate[index % scheduleTemplate.length];
-    return {
-      id: buildLessonId(index, assignment.classId, assignment.subjectId),
-      classId: assignment.classId,
-      className: assignment.class.name,
-      subjectId: assignment.subjectId,
-      subjectName: assignment.subject.name,
-      ...template,
-    };
-  });
-
+  // Prisma: emploi du temps à implémenter avec le modèle TimeSlot
   return {
-    weeklySchedule: lessons,
-    upcomingLessons: lessons.slice(0, 3),
+    weeklySchedule: [],
+    upcomingLessons: [],
   };
 }
 

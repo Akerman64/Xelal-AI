@@ -1206,4 +1206,106 @@ export const schoolRepository = {
     const row = await prisma!.teacherAssignment.delete({ where: { id: assignmentId } });
     return { id: row.id };
   },
+
+  // ─── Emploi du temps ───────────────────────────────────────────────────────
+
+  async listTimeSlots(filters?: { classId?: string; teacherId?: string }) {
+    if (!isPrismaEnabled()) {
+      return devStore.timeSlots
+        .filter((slot) => {
+          if (filters?.classId && slot.classId !== filters.classId) return false;
+          if (filters?.teacherId && slot.teacherId !== filters.teacherId) return false;
+          return true;
+        })
+        .map((slot) => {
+          const cls = devStore.classes.find((c) => c.id === slot.classId);
+          const subject = devStore.subjects.find((s) => s.id === slot.subjectId);
+          const teacher = devStore.users.find((u) => u.id === slot.teacherId);
+          return {
+            id: slot.id,
+            classId: slot.classId,
+            className: cls?.name ?? slot.classId,
+            subjectId: slot.subjectId,
+            subjectName: subject?.name ?? slot.subjectId,
+            teacherId: slot.teacherId,
+            teacherName: teacher ? `${teacher.firstName} ${teacher.lastName}` : slot.teacherId,
+            day: slot.day,
+            startTime: slot.startTime,
+            endTime: slot.endTime,
+            room: slot.room ?? null,
+          };
+        });
+    }
+
+    // Prisma stub — implémentation à compléter avec la migration TimeSlot
+    return [];
+  },
+
+  async createTimeSlot(input: {
+    classId: string;
+    subjectId: string;
+    teacherId: string;
+    day: string;
+    startTime: string;
+    endTime: string;
+    room?: string;
+  }) {
+    if (!isPrismaEnabled()) {
+      const cls = devStore.classes.find((c) => c.id === input.classId);
+      const subject = devStore.subjects.find((s) => s.id === input.subjectId);
+      const teacher = devStore.users.find((u) => u.id === input.teacherId);
+
+      if (!cls) throw new Error("Classe introuvable.");
+      if (!subject) throw new Error("Matière introuvable.");
+      if (!teacher) throw new Error("Enseignant introuvable.");
+
+      const duplicate = devStore.timeSlots.find(
+        (s) =>
+          s.classId === input.classId &&
+          s.day === input.day &&
+          s.startTime === input.startTime,
+      );
+      if (duplicate) throw new Error("Un créneau existe déjà à ce jour et cette heure pour cette classe.");
+
+      const created = {
+        id: createId("ts"),
+        classId: input.classId,
+        subjectId: input.subjectId,
+        teacherId: input.teacherId,
+        day: input.day as import("./dev-store").WeekDay,
+        startTime: input.startTime,
+        endTime: input.endTime,
+        room: input.room,
+      };
+
+      devStore.timeSlots.push(created);
+
+      return {
+        id: created.id,
+        classId: cls.id,
+        className: cls.name,
+        subjectId: subject.id,
+        subjectName: subject.name,
+        teacherId: teacher.id,
+        teacherName: `${teacher.firstName} ${teacher.lastName}`,
+        day: created.day,
+        startTime: created.startTime,
+        endTime: created.endTime,
+        room: created.room ?? null,
+      };
+    }
+
+    throw new Error("Emploi du temps non disponible en mode Prisma pour l'instant.");
+  },
+
+  async deleteTimeSlot(slotId: string) {
+    if (!isPrismaEnabled()) {
+      const index = devStore.timeSlots.findIndex((s) => s.id === slotId);
+      if (index === -1) throw new Error("Créneau introuvable.");
+      devStore.timeSlots.splice(index, 1);
+      return { id: slotId };
+    }
+
+    throw new Error("Emploi du temps non disponible en mode Prisma pour l'instant.");
+  },
 };

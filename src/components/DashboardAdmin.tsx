@@ -21,20 +21,45 @@ import {
   BookOpen,
   Trash2,
   GraduationCap,
+  Sparkles,
+  X,
+  ChevronRight,
+  Mail,
+  Clock,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { AuthSession } from '../types';
-import { adminService, type AdminAssignmentRecord, type AdminClassRecord, type AdminInvitationRecord, type AdminOverview, type AdminSubjectRecord, type AdminUserRecord } from '../services/adminService';
+import { adminService, type AdminAssignmentRecord, type AdminClassRecord, type AdminClassReport, type AdminInvitationRecord, type AdminOverview, type AdminParentStudentLinkRecord, type AdminRecommendationStats, type AdminSubjectRecord, type AdminTimeSlotRecord, type AdminUserRecord, type WeekDay } from '../services/adminService';
 
 interface DashboardAdminProps {
   session?: AuthSession;
 }
+
+interface HeaderActionState {
+  exportLabel?: string;
+  quickActionLabel?: string;
+  onExport?: () => void;
+  onQuickAction?: () => void;
+}
+
+const downloadJson = (filename: string, payload: unknown) => {
+  const blob = new Blob([JSON.stringify(payload, null, 2)], {
+    type: 'application/json',
+  });
+  const url = URL.createObjectURL(blob);
+  const anchor = document.createElement('a');
+  anchor.href = url;
+  anchor.download = filename;
+  anchor.click();
+  URL.revokeObjectURL(url);
+};
 
 export default function DashboardAdmin({ session }: DashboardAdminProps) {
   const [selectedTab, setSelectedTab] = useState('établissement');
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [overviewError, setOverviewError] = useState<string | null>(null);
   const [overviewVersion, setOverviewVersion] = useState(0);
+  const [headerActions, setHeaderActions] = useState<HeaderActionState>({});
 
   useEffect(() => {
     let isMounted = true;
@@ -64,11 +89,18 @@ export default function DashboardAdmin({ session }: DashboardAdminProps) {
     };
   }, [session, overviewVersion]);
 
+  useEffect(() => {
+    if (selectedTab !== 'établissement') {
+      setHeaderActions({});
+    }
+  }, [selectedTab]);
+
   const navItems = [
     { id: 'établissement', icon: Building2, label: 'Établissement' },
     { id: 'statistiques', icon: BarChart3, label: 'Statistiques' },
     { id: 'utilisateurs', icon: Users, label: 'Utilisateurs' },
     { id: 'affectations', icon: BookOpen, label: 'Affectations' },
+    { id: 'emploi-du-temps', icon: Clock, label: 'Emploi du temps' },
     { id: 'rapports', icon: FileText, label: 'Rapports' },
     { id: 'alertes', icon: ShieldAlert, label: 'Alertes' },
   ];
@@ -118,27 +150,66 @@ export default function DashboardAdmin({ session }: DashboardAdminProps) {
                 </p>
               </div>
               <div className="flex gap-4">
-                <button className="flex items-center gap-2 px-6 py-3 bg-white border border-border text-text-main rounded-xl font-bold hover:bg-bg transition-all text-sm shadow-sm">
-                   <Download size={18} /> Exporter
+                <button
+                  onClick={() => headerActions.onExport?.()}
+                  disabled={!headerActions.onExport}
+                  className="flex items-center gap-2 px-6 py-3 bg-white border border-border text-text-main rounded-xl font-bold hover:bg-bg transition-all text-sm shadow-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                   <Download size={18} /> {headerActions.exportLabel ?? 'Exporter'}
                 </button>
-                <button className="flex items-center gap-2 px-6 py-3 bg-accent text-white rounded-xl font-bold shadow-lg shadow-blue-100 hover:scale-[1.02] active:scale-95 transition-all text-sm">
-                  <Plus size={18} /> {selectedTab === 'utilisateurs' ? 'Nouvel Utilisateur' : selectedTab === 'affectations' ? 'Nouvelle Affectation' : 'Action Rapide'}
+                <button
+                  onClick={() => headerActions.onQuickAction?.()}
+                  disabled={!headerActions.onQuickAction}
+                  className="flex items-center gap-2 px-6 py-3 bg-accent text-white rounded-xl font-bold shadow-lg shadow-blue-100 hover:scale-[1.02] active:scale-95 transition-all text-sm disabled:opacity-50 disabled:cursor-not-allowed"
+                >
+                  <Plus size={18} /> {headerActions.quickActionLabel ?? (selectedTab === 'utilisateurs' ? 'Nouvel Utilisateur' : selectedTab === 'affectations' ? 'Nouvelle Affectation' : 'Action Rapide')}
                 </button>
               </div>
             </div>
 
             {/* Dynamic Content Switching */}
-            {selectedTab === 'établissement' && <EstablishmentView overview={overview} error={overviewError} session={session} />}
-            {selectedTab === 'statistiques' && <StatisticsView />}
+            {selectedTab === 'établissement' && (
+              <EstablishmentView
+                overview={overview}
+                error={overviewError}
+                session={session}
+                onRegisterHeaderActions={setHeaderActions}
+                onNavigateTab={setSelectedTab}
+              />
+            )}
+            {selectedTab === 'statistiques' && (
+              <StatisticsView
+                session={session}
+                onRegisterHeaderActions={setHeaderActions}
+                onNavigateTab={setSelectedTab}
+              />
+            )}
             {selectedTab === 'utilisateurs' && (
               <UsersManagementView
                 session={session}
                 onDataChanged={() => setOverviewVersion((current) => current + 1)}
+                onRegisterHeaderActions={setHeaderActions}
               />
             )}
-            {selectedTab === 'affectations' && <AssignmentsView session={session} />}
-            {selectedTab === 'rapports' && <ReportsView />}
-            {selectedTab === 'alertes' && <AlertsView />}
+            {selectedTab === 'affectations' && (
+              <AssignmentsView session={session} onRegisterHeaderActions={setHeaderActions} />
+            )}
+            {selectedTab === 'emploi-du-temps' && (
+              <ScheduleView session={session} onRegisterHeaderActions={setHeaderActions} />
+            )}
+            {selectedTab === 'rapports' && (
+              <ReportsView
+                session={session}
+                onRegisterHeaderActions={setHeaderActions}
+              />
+            )}
+            {selectedTab === 'alertes' && (
+              <AlertsView
+                session={session}
+                onRegisterHeaderActions={setHeaderActions}
+                onNavigateTab={setSelectedTab}
+              />
+            )}
           </motion.div>
         </AnimatePresence>
       </main>
@@ -147,18 +218,190 @@ export default function DashboardAdmin({ session }: DashboardAdminProps) {
 }
 
 // Sub-views for better organization
-function EstablishmentView({ overview, error, session }: { overview: AdminOverview | null; error: string | null; session?: AuthSession }) {
+function EstablishmentView({
+  overview,
+  error,
+  session,
+  onRegisterHeaderActions,
+  onNavigateTab,
+}: {
+  overview: AdminOverview | null;
+  error: string | null;
+  session?: AuthSession;
+  onRegisterHeaderActions?: (actions: HeaderActionState) => void;
+  onNavigateTab?: (tab: string) => void;
+}) {
   const [subTab, setSubTab] = useState<'overview' | 'classes' | 'matieres'>('overview');
+  const [users, setUsers] = useState<AdminUserRecord[]>([]);
+  const [invitations, setInvitations] = useState<AdminInvitationRecord[]>([]);
+  const [classes, setClasses] = useState<AdminClassRecord[]>([]);
+  const [recommendationStats, setRecommendationStats] = useState<AdminRecommendationStats | null>(null);
+  const [localError, setLocalError] = useState<string | null>(null);
+  const [detailPanel, setDetailPanel] = useState<{
+    title: string;
+    subtitle?: string;
+    rows: Array<{ title: string; meta?: string; badge?: string }>;
+  } | null>(null);
+  const [quickActionsOpen, setQuickActionsOpen] = useState(false);
   const totalUsers = overview?.totals.users ?? 0;
   const activeUsers = overview?.totals.activeUsers ?? 0;
   const pendingUsers = overview?.totals.pendingUsers ?? 0;
   const suspendedUsers = overview?.totals.suspendedUsers ?? 0;
 
+  useEffect(() => {
+    let isMounted = true;
+
+    const load = async () => {
+      if (!session) return;
+
+      try {
+        const [nextUsers, nextInvitations, nextClasses, nextRecommendationStats] = await Promise.all([
+          adminService.fetchUsers(session),
+          adminService.fetchInvitations(session),
+          adminService.fetchClasses(session),
+          adminService.fetchRecommendationStats(session),
+        ]);
+
+        if (!isMounted) return;
+        setUsers(nextUsers);
+        setInvitations(nextInvitations);
+        setClasses(nextClasses);
+        setRecommendationStats(nextRecommendationStats);
+        setLocalError(null);
+      } catch (currentError) {
+        if (!isMounted) return;
+        setLocalError(currentError instanceof Error ? currentError.message : 'Chargement établissement indisponible.');
+      }
+    };
+
+    void load();
+    return () => {
+      isMounted = false;
+    };
+  }, [session]);
+
+  const exportSnapshot = useMemo(
+    () => ({
+      exportedAt: new Date().toISOString(),
+      overview,
+      users,
+      invitations,
+      classes,
+      recommendationStats,
+    }),
+    [overview, users, invitations, classes, recommendationStats],
+  );
+
+  useEffect(() => {
+    onRegisterHeaderActions?.({
+      exportLabel: 'Exporter établissement',
+      quickActionLabel: 'Action Rapide',
+      onExport: () => {
+        downloadJson(`xelal-etablissement-${new Date().toISOString().slice(0, 10)}.json`, exportSnapshot);
+      },
+      onQuickAction: () => setQuickActionsOpen(true),
+    });
+
+    return () => onRegisterHeaderActions?.({});
+  }, [exportSnapshot, onRegisterHeaderActions]);
+
+  const classInsights = useMemo(() => {
+    const topClassesMap = new Map((recommendationStats?.topClasses ?? []).map((item) => [item.classId, item]));
+    return classes.map((item) => {
+      const aiInfo = topClassesMap.get(item.id);
+      return {
+        ...item,
+        aiRecommendations: aiInfo?.recommendationsCount ?? 0,
+        averageRiskScore: aiInfo?.averageRiskScore ?? 0,
+      };
+    });
+  }, [classes, recommendationStats]);
+
+  const openUserPanel = (title: string, subtitle: string, predicate: (user: AdminUserRecord) => boolean) => {
+    const rows = users
+      .filter(predicate)
+      .map((user) => ({
+        title: `${user.firstName} ${user.lastName}`,
+        meta: `${user.email} • ${user.role} • ${user.status}`,
+        badge: user.status,
+      }));
+
+    setDetailPanel({
+      title,
+      subtitle,
+      rows,
+    });
+  };
+
+  const openInvitationPanel = () => {
+    const rows = invitations
+      .filter((item) => item.status === 'PENDING')
+      .map((item) => ({
+        title: item.email,
+        meta: `${item.role} • expire le ${new Intl.DateTimeFormat('fr-FR', { dateStyle: 'medium' }).format(new Date(item.expiresAt))}`,
+        badge: item.status,
+      }));
+
+    setDetailPanel({
+      title: 'Invitations en attente',
+      subtitle: 'Suivi des accès non encore activés',
+      rows,
+    });
+  };
+
+  const openRolePanel = (label: string, role: AdminUserRecord['role']) => {
+    openUserPanel(`Répartition ${label}`, `Utilisateurs avec le rôle ${label.toLowerCase()}`, (user) => user.role === role);
+  };
+
+  const openReportPanel = () => {
+    setDetailPanel({
+      title: 'Rapport complet établissement',
+      subtitle: 'Vue consolidée de la base école',
+      rows: [
+        { title: `${totalUsers} utilisateurs`, meta: `${activeUsers} actifs • ${suspendedUsers} suspendus` },
+        { title: `${classes.length} classes`, meta: `${classes.reduce((sum, item) => sum + item.studentsCount, 0)} élèves inscrits` },
+        { title: `${invitations.filter((item) => item.status === 'PENDING').length} invitations en attente`, meta: `${overview?.byRole.parents ?? 0} comptes parent recensés` },
+        { title: `${recommendationStats?.totals.total ?? 0} recommandations IA`, meta: `${recommendationStats?.totals.followThroughRate ?? 0}% avec suivi WhatsApp` },
+      ],
+    });
+  };
+
+  const metricCards = [
+    {
+      label: 'Utilisateurs',
+      value: String(totalUsers),
+      icon: Users,
+      color: '#3b82f6',
+      onClick: () => openUserPanel('Tous les utilisateurs', 'Liste complète des comptes de l’établissement', () => true),
+    },
+    {
+      label: 'Comptes Actifs',
+      value: String(activeUsers),
+      icon: CheckCircle2,
+      color: '#1e3a8a',
+      onClick: () => openUserPanel('Comptes actifs', 'Accès opérationnels actuellement', (user) => user.status === 'ACTIVE'),
+    },
+    {
+      label: 'Invitations En Attente',
+      value: String(overview?.totals.invitationsPending ?? 0),
+      icon: Mail,
+      color: '#ef4444',
+      onClick: openInvitationPanel,
+    },
+    {
+      label: 'Comptes Suspendus',
+      value: String(suspendedUsers),
+      icon: Building2,
+      color: '#22c55e',
+      onClick: () => openUserPanel('Comptes suspendus', 'Utilisateurs temporairement bloqués', (user) => user.status === 'SUSPENDED'),
+    },
+  ];
+
   return (
     <>
-      {error && (
+      {(error || localError) && (
         <div className="rounded-2xl border border-danger/20 bg-danger/5 px-4 py-3 text-sm font-semibold text-danger mb-6">
-          {error}
+          {error || localError}
         </div>
       )}
 
@@ -182,13 +425,8 @@ function EstablishmentView({ overview, error, session }: { overview: AdminOvervi
       {subTab === 'overview' && (
         <>
           <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-12">
-            {[
-              { label: "Utilisateurs", value: String(totalUsers), icon: Users, color: "#3b82f6" },
-              { label: "Comptes Actifs", value: String(activeUsers), icon: CheckCircle2, color: "#1e3a8a" },
-              { label: "Invitations En Attente", value: String(overview?.totals.invitationsPending ?? 0), icon: ShieldAlert, color: "#ef4444" },
-              { label: "Comptes Suspendus", value: String(suspendedUsers), icon: Building2, color: "#22c55e" },
-            ].map((stat, i) => (
-              <div key={i} className="polished-card p-6">
+            {metricCards.map((stat) => (
+              <button key={stat.label} type="button" onClick={stat.onClick} className="polished-card p-6 text-left transition-transform hover:-translate-y-1">
                 <div className="flex justify-between items-start mb-6">
                   <div className="w-10 h-10 rounded-xl flex items-center justify-center bg-bg border border-border" style={{ color: stat.color }}>
                     <stat.icon size={20} />
@@ -197,24 +435,29 @@ function EstablishmentView({ overview, error, session }: { overview: AdminOvervi
                 </div>
                 <h3 className="text-3xl font-bold text-text-main mb-1 tracking-tight">{stat.value}</h3>
                 <p className="text-[10px] text-text-muted font-bold uppercase tracking-widest">{stat.label}</p>
-              </div>
+              </button>
             ))}
           </div>
 
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
             <div className="lg:col-span-2 polished-card p-8 bg-white">
-              <h3 className="text-lg font-bold text-text-main mb-10">Performance par Classe</h3>
+              <h3 className="text-lg font-bold text-text-main mb-10">Vue réelle des classes</h3>
               <div className="space-y-8">
-                {['Terminale S1', 'Terminale L1', 'Seconde S1', 'Troisième A'].map((cls, i) => (
-                  <div key={i} className="flex items-center gap-8">
-                    <span className="w-28 text-xs font-bold text-text-main truncate text-left">{cls}</span>
+                {(classInsights.length ? classInsights : [{ id: 'empty', name: 'Aucune classe', studentsCount: 0, teachersCount: 0, aiRecommendations: 0, averageRiskScore: 0 }]).map((cls) => (
+                  <div key={cls.id} className="flex items-center gap-8">
+                    <span className="w-28 text-xs font-bold text-text-main truncate text-left">{cls.name}</span>
                     <div className="flex-1 h-2 bg-bg rounded-full overflow-hidden">
-                      <div className="h-full bg-primary" style={{ width: `${85 - i * 15}%`, opacity: 1 - i * 0.15 }} />
+                      <div className="h-full bg-primary" style={{ width: `${Math.min(100, Math.max(8, cls.studentsCount * 10))}%` }} />
                     </div>
-                    <span className="w-14 font-mono font-bold text-right text-sm text-text-main">{(14.5 - i * 1.5).toFixed(1)}</span>
+                    <span className="w-24 font-mono font-bold text-right text-sm text-text-main">
+                      {cls.studentsCount} él. / {cls.teachersCount} prof.
+                    </span>
                   </div>
                 ))}
               </div>
+              <p className="mt-6 text-xs text-text-muted">
+                Les barres reflètent l’effectif réel de chaque classe. Le suivi IA est alimenté par les recommandations enregistrées.
+              </p>
             </div>
             <div className="bg-primary rounded-[2rem] p-8 text-white shadow-2xl relative overflow-hidden flex flex-col">
               <h3 className="text-lg font-bold mb-8">Alertes Critiques</h3>
@@ -224,11 +467,11 @@ function EstablishmentView({ overview, error, session }: { overview: AdminOvervi
                   <p className="text-[10px] text-white/50">{pendingUsers} utilisateur(s) doivent encore activer leur accès</p>
                 </div>
                 <div className="bg-white/5 border border-white/10 p-4 rounded-2xl">
-                  <p className="text-xs font-bold leading-tight">Parents à onboarder</p>
-                  <p className="text-[10px] text-white/50">{overview?.byRole.parents ?? 0} compte(s) parent actuellement recensés</p>
+                  <p className="text-xs font-bold leading-tight">Suivi IA établissement</p>
+                  <p className="text-[10px] text-white/50">{recommendationStats?.totals.total ?? 0} recommandation(s), {recommendationStats?.totals.followThroughRate ?? 0}% avec envoi WhatsApp</p>
                 </div>
               </div>
-              <button className="w-full py-4 bg-white text-primary font-bold rounded-xl text-sm shadow-xl">
+              <button onClick={openReportPanel} className="w-full py-4 bg-white text-primary font-bold rounded-xl text-sm shadow-xl">
                 Rapport complet
               </button>
             </div>
@@ -239,12 +482,12 @@ function EstablishmentView({ overview, error, session }: { overview: AdminOvervi
               <h3 className="text-lg font-bold text-text-main mb-6">Répartition des accès</h3>
               <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                 {[
-                  { label: 'Admins', value: overview.byRole.admins, tone: 'bg-slate-100 text-slate-700' },
-                  { label: 'Enseignants', value: overview.byRole.teachers, tone: 'bg-blue-100 text-blue-700' },
-                  { label: 'Élèves', value: overview.byRole.students, tone: 'bg-green-100 text-green-700' },
-                  { label: 'Parents', value: overview.byRole.parents, tone: 'bg-amber-100 text-amber-700' },
+                  { label: 'Admins', value: overview.byRole.admins, tone: 'bg-slate-100 text-slate-700', role: 'admin' as const },
+                  { label: 'Enseignants', value: overview.byRole.teachers, tone: 'bg-blue-100 text-blue-700', role: 'teacher' as const },
+                  { label: 'Élèves', value: overview.byRole.students, tone: 'bg-green-100 text-green-700', role: 'student' as const },
+                  { label: 'Parents', value: overview.byRole.parents, tone: 'bg-amber-100 text-amber-700', role: 'parent' as const },
                 ].map((item) => (
-                  <div key={item.label} className="rounded-2xl border border-border bg-white px-5 py-4">
+                  <button key={item.label} type="button" onClick={() => openRolePanel(item.label, item.role)} className="rounded-2xl border border-border bg-white px-5 py-4 text-left transition-transform hover:-translate-y-1">
                     <p className="text-xs font-bold uppercase tracking-widest text-text-muted">{item.label}</p>
                     <div className="mt-3 flex items-center justify-between">
                       <p className="text-3xl font-extrabold tracking-tight text-text-main">{item.value}</p>
@@ -252,11 +495,108 @@ function EstablishmentView({ overview, error, session }: { overview: AdminOvervi
                         Accès
                       </span>
                     </div>
-                  </div>
+                  </button>
                 ))}
               </div>
             </div>
           )}
+
+          <AnimatePresence>
+            {detailPanel && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-40 bg-ink/45 backdrop-blur-sm px-6 py-10"
+              >
+                <div className="mx-auto max-w-3xl rounded-[2rem] bg-white shadow-2xl border border-border overflow-hidden">
+                  <div className="flex items-start justify-between gap-4 border-b border-border px-8 py-6">
+                    <div>
+                      <h3 className="text-2xl font-extrabold tracking-tight text-text-main">{detailPanel.title}</h3>
+                      {detailPanel.subtitle && <p className="mt-2 text-sm text-text-muted">{detailPanel.subtitle}</p>}
+                    </div>
+                    <button onClick={() => setDetailPanel(null)} className="rounded-xl border border-border p-2 text-text-muted hover:bg-bg">
+                      <X size={18} />
+                    </button>
+                  </div>
+
+                  <div className="max-h-[60vh] overflow-y-auto px-8 py-6 space-y-3">
+                    {detailPanel.rows.length ? detailPanel.rows.map((row, index) => (
+                      <div key={`${row.title}-${index}`} className="rounded-2xl border border-border bg-bg px-4 py-4 flex items-start justify-between gap-4">
+                        <div>
+                          <p className="font-bold text-text-main">{row.title}</p>
+                          {row.meta && <p className="mt-1 text-xs text-text-muted">{row.meta}</p>}
+                        </div>
+                        {row.badge && (
+                          <span className="rounded-full bg-primary/10 px-3 py-1 text-[10px] font-bold uppercase text-primary">
+                            {row.badge}
+                          </span>
+                        )}
+                      </div>
+                    )) : (
+                      <div className="rounded-2xl border border-border bg-bg px-4 py-6 text-sm text-text-muted">
+                        Aucune donnée à afficher pour le moment.
+                      </div>
+                    )}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          <AnimatePresence>
+            {quickActionsOpen && (
+              <motion.div
+                initial={{ opacity: 0 }}
+                animate={{ opacity: 1 }}
+                exit={{ opacity: 0 }}
+                className="fixed inset-0 z-40 bg-ink/35 backdrop-blur-sm px-6 py-10"
+              >
+                <div className="mx-auto max-w-xl rounded-[2rem] bg-white shadow-2xl border border-border overflow-hidden">
+                  <div className="flex items-start justify-between gap-4 border-b border-border px-8 py-6">
+                    <div>
+                      <h3 className="text-2xl font-extrabold tracking-tight text-text-main">Actions rapides</h3>
+                      <p className="mt-2 text-sm text-text-muted">Raccourcis administrateur les plus utiles depuis la vue établissement.</p>
+                    </div>
+                    <button onClick={() => setQuickActionsOpen(false)} className="rounded-xl border border-border p-2 text-text-muted hover:bg-bg">
+                      <X size={18} />
+                    </button>
+                  </div>
+
+                  <div className="px-8 py-6 space-y-3">
+                    {[
+                      { label: 'Gérer les utilisateurs', description: 'Inviter, activer ou suspendre des comptes.', tab: 'utilisateurs' },
+                      { label: 'Gérer les affectations', description: 'Affecter les enseignants aux classes et matières.', tab: 'affectations' },
+                      { label: 'Voir les classes', description: 'Revenir sur le sous-onglet classes de l’établissement.', action: () => setSubTab('classes') },
+                      { label: 'Voir les matières', description: 'Revenir sur le sous-onglet matières de l’établissement.', action: () => setSubTab('matieres') },
+                    ].map((item) => (
+                      <button
+                        key={item.label}
+                        type="button"
+                        onClick={() => {
+                          setQuickActionsOpen(false);
+                          if (item.tab) {
+                            onNavigateTab?.(item.tab);
+                            return;
+                          }
+                          item.action?.();
+                        }}
+                        className="w-full rounded-2xl border border-border bg-bg px-4 py-4 text-left hover:bg-white transition-colors"
+                      >
+                        <div className="flex items-center justify-between gap-4">
+                          <div>
+                            <p className="font-bold text-text-main">{item.label}</p>
+                            <p className="mt-1 text-xs text-text-muted">{item.description}</p>
+                          </div>
+                          <ChevronRight size={18} className="text-text-muted" />
+                        </div>
+                      </button>
+                    ))}
+                  </div>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
         </>
       )}
 
@@ -266,40 +606,121 @@ function EstablishmentView({ overview, error, session }: { overview: AdminOvervi
   );
 }
 
-function StatisticsView() {
+function StatisticsView({
+  session,
+  onRegisterHeaderActions,
+  onNavigateTab,
+}: {
+  session?: AuthSession;
+  onRegisterHeaderActions?: (actions: HeaderActionState) => void;
+  onNavigateTab?: (tab: string) => void;
+}) {
+  const [stats, setStats] = useState<AdminRecommendationStats | null>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const load = async () => {
+      if (!session) {
+        setError('Session admin absente.');
+        return;
+      }
+
+      try {
+        const nextStats = await adminService.fetchRecommendationStats(session);
+        if (!isMounted) return;
+        setStats(nextStats);
+        setError(null);
+      } catch (currentError) {
+        if (!isMounted) return;
+        setError(currentError instanceof Error ? currentError.message : 'Statistiques indisponibles.');
+      }
+    };
+
+    void load();
+    return () => {
+      isMounted = false;
+    };
+  }, [session]);
+
+  const timeline = stats?.timeline ?? [];
+  const maxTimeline = Math.max(...timeline.map((item) => item.total), 1);
+  const riskValues = stats
+    ? [
+        { label: 'Critique', value: stats.byRiskLevel.critical, color: 'bg-danger', text: 'text-danger' },
+        { label: 'Élevé', value: stats.byRiskLevel.high, color: 'bg-warning', text: 'text-warning' },
+        { label: 'Moyen', value: stats.byRiskLevel.medium, color: 'bg-accent', text: 'text-accent' },
+        { label: 'Faible', value: stats.byRiskLevel.low, color: 'bg-success', text: 'text-success' },
+      ]
+    : [];
+  const maxRiskValue = Math.max(...riskValues.map((item) => item.value), 1);
+
+  useEffect(() => {
+    onRegisterHeaderActions?.({
+      exportLabel: 'Exporter statistiques',
+      quickActionLabel: 'Voir les rapports',
+      onExport: () => downloadJson(`xelal-statistiques-${new Date().toISOString().slice(0, 10)}.json`, stats),
+      onQuickAction: () => onNavigateTab?.('rapports'),
+    });
+
+    return () => onRegisterHeaderActions?.({});
+  }, [stats, onRegisterHeaderActions, onNavigateTab]);
+
   return (
     <div className="space-y-8">
+      {error && (
+        <div className="rounded-2xl border border-danger/20 bg-danger/5 px-4 py-3 text-sm font-semibold text-danger">
+          {error}
+        </div>
+      )}
+
+      {stats && (
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
+          {[
+            { label: 'Recommandations', value: stats.totals.total, tone: 'text-primary' },
+            { label: 'WhatsApp envoyés', value: stats.totals.whatsappSent, tone: 'text-success' },
+            { label: 'Taux de suivi', value: `${stats.totals.followThroughRate}%`, tone: 'text-accent' },
+            { label: 'Rapports de classe', value: stats.totals.classRecommendations, tone: 'text-warning' },
+          ].map((item) => (
+            <div key={item.label} className="polished-card p-6">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted">{item.label}</p>
+              <p className={`mt-4 text-3xl font-extrabold tracking-tight ${item.tone}`}>{item.value}</p>
+            </div>
+          ))}
+        </div>
+      )}
+
       <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
         <div className="polished-card p-8">
-          <h3 className="text-lg font-bold text-text-main mb-6">Évolution des Résultats</h3>
+          <h3 className="text-lg font-bold text-text-main mb-6">Évolution des recommandations</h3>
           <div className="h-64 flex items-end gap-2 px-4 border-b border-border pb-4">
-             {[45, 60, 55, 75, 85, 80, 95].map((h, i) => (
-               <div key={i} className="flex-1 bg-accent rounded-t-lg transition-all hover:bg-primary cursor-pointer relative group" style={{ height: `${h}%` }}>
+             {(timeline.length ? timeline : [{ date: new Date().toISOString().slice(0, 10), total: 0, whatsappSent: 0 }]).map((item) => (
+               <div key={item.date} className="flex-1 bg-accent rounded-t-lg transition-all hover:bg-primary cursor-pointer relative group" style={{ height: `${Math.max((item.total / maxTimeline) * 100, 8)}%` }}>
                  <div className="absolute -top-8 left-1/2 -translate-x-1/2 bg-ink text-white text-[9px] px-1.5 py-0.5 rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap">
-                   Trim {i+1}: {h}%
+                   {item.date}: {item.total} reco / {item.whatsappSent} envoyés
                  </div>
                </div>
              ))}
           </div>
           <div className="flex justify-between mt-4 text-[10px] font-bold text-text-muted px-4">
-            <span>SEPTIEMBRE</span>
-            <span>OCTOBRE</span>
-            <span>NOVEMBRE</span>
-            <span>DÉCEMBRE</span>
+            {(timeline.length ? timeline : [{ date: new Date().toISOString().slice(0, 10), total: 0, whatsappSent: 0 }]).slice(0, 5).map((item) => (
+              <span key={item.date}>{item.date.slice(5)}</span>
+            ))}
           </div>
         </div>
 
         <div className="polished-card p-8">
-          <h3 className="text-lg font-bold text-text-main mb-6">Répartition par Matière</h3>
+          <h3 className="text-lg font-bold text-text-main mb-6">Répartition par niveau de risque</h3>
           <div className="space-y-6">
-            {['Mathématiques', 'Français', 'Anglais', 'Physique-Chimie'].map((sub, i) => (
-              <div key={i} className="space-y-2">
+            {riskValues.map((sub) => (
+              <div key={sub.label} className="space-y-2">
                 <div className="flex justify-between text-xs font-bold">
-                  <span>{sub}</span>
-                  <span className="text-accent">{12 + i * 1.5}/20</span>
+                  <span>{sub.label}</span>
+                  <span className={sub.text}>{sub.value}</span>
                 </div>
                 <div className="h-1.5 bg-bg rounded-full overflow-hidden">
-                  <div className="h-full bg-accent" style={{ width: `${60 + i * 10}%` }} />
+                  <div className={`h-full ${sub.color}`} style={{ width: `${Math.max((sub.value / maxRiskValue) * 100, 8)}%` }} />
                 </div>
               </div>
             ))}
@@ -308,34 +729,39 @@ function StatisticsView() {
       </div>
       
       <div className="polished-card p-8">
-        <h3 className="text-lg font-bold text-text-main mb-6">Analyses Prédictives IA</h3>
+        <h3 className="text-lg font-bold text-text-main mb-6">Classes les plus suivies par l’IA</h3>
         <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
-           <div className="bg-primary/5 border border-primary/10 p-6 rounded-2xl border-l-[6px] border-l-primary">
-              <h4 className="text-sm font-bold text-primary mb-2">Taux de Réussite Bac</h4>
-              <p className="text-3xl font-extrabold text-primary mb-2">84.2%</p>
-              <p className="text-xs text-text-muted font-medium">Projection basée sur les notes actuelles du T1.</p>
+          {(stats?.topClasses.length ? stats.topClasses : [
+            { classId: 'placeholder', className: 'Aucune donnée pour le moment', recommendationsCount: 0, averageRiskScore: 0 },
+          ]).map((item) => (
+           <div key={item.classId} className="bg-primary/5 border border-primary/10 p-6 rounded-2xl border-l-[6px] border-l-primary">
+              <h4 className="text-sm font-bold text-primary mb-2">{item.className}</h4>
+              <p className="text-3xl font-extrabold text-primary mb-2">{item.recommendationsCount}</p>
+              <p className="text-xs text-text-muted font-medium">
+                Score de risque moyen: {item.averageRiskScore}
+              </p>
            </div>
-           <div className="bg-danger/5 border border-danger/10 p-6 rounded-2xl border-l-[6px] border-l-danger">
-              <h4 className="text-sm font-bold text-danger mb-2">Décrochage Scolaire</h4>
-              <p className="text-3xl font-extrabold text-danger mb-2">3.1%</p>
-              <p className="text-xs text-text-muted font-medium">Baisse de 0.5% par rapport à l'année dernière.</p>
-           </div>
-           <div className="bg-success/5 border border-success/10 p-6 rounded-2xl border-l-[6px] border-l-success">
-              <h4 className="text-sm font-bold text-success mb-2">Performance Professeurs</h4>
-              <p className="text-3xl font-extrabold text-success mb-2">92%</p>
-              <p className="text-xs text-text-muted font-medium">Score de satisfaction et progression des élèves.</p>
-           </div>
+          ))}
         </div>
       </div>
     </div>
   );
 }
 
-function UsersManagementView({ session, onDataChanged }: { session?: AuthSession; onDataChanged?: () => void }) {
+function UsersManagementView({
+  session,
+  onDataChanged,
+  onRegisterHeaderActions,
+}: {
+  session?: AuthSession;
+  onDataChanged?: () => void;
+  onRegisterHeaderActions?: (actions: HeaderActionState) => void;
+}) {
   const [filter, setFilter] = useState('all');
   const [query, setQuery] = useState('');
   const [users, setUsers] = useState<AdminUserRecord[]>([]);
   const [invitations, setInvitations] = useState<AdminInvitationRecord[]>([]);
+  const [parentLinks, setParentLinks] = useState<AdminParentStudentLinkRecord[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [success, setSuccess] = useState<string | null>(null);
   const [isLoading, setIsLoading] = useState(true);
@@ -344,6 +770,10 @@ function UsersManagementView({ session, onDataChanged }: { session?: AuthSession
   const [inviteFirstName, setInviteFirstName] = useState('');
   const [inviteLastName, setInviteLastName] = useState('');
   const [inviteRole, setInviteRole] = useState<'TEACHER' | 'STUDENT' | 'PARENT' | 'ADMIN'>('TEACHER');
+  const [selectedParentId, setSelectedParentId] = useState('');
+  const [selectedStudentId, setSelectedStudentId] = useState('');
+  const [selectedRelationship, setSelectedRelationship] = useState<'MOTHER' | 'FATHER' | 'TUTOR'>('MOTHER');
+  const [isPrimaryLink, setIsPrimaryLink] = useState(true);
 
   useEffect(() => {
     let isMounted = true;
@@ -357,15 +787,17 @@ function UsersManagementView({ session, onDataChanged }: { session?: AuthSession
 
       setIsLoading(true);
       try {
-        const [nextUsers, nextInvitations] = await Promise.all([
+        const [nextUsers, nextInvitations, nextLinks] = await Promise.all([
           adminService.fetchUsers(session),
           adminService.fetchInvitations(session),
+          adminService.fetchParentStudentLinks(session),
         ]);
 
         if (!isMounted) return;
 
         setUsers(nextUsers);
         setInvitations(nextInvitations.sort((left, right) => right.createdAt.localeCompare(left.createdAt)));
+        setParentLinks(nextLinks);
         setError(null);
       } catch (currentError) {
         if (!isMounted) return;
@@ -384,6 +816,20 @@ function UsersManagementView({ session, onDataChanged }: { session?: AuthSession
     };
   }, [session]);
 
+  useEffect(() => {
+    onRegisterHeaderActions?.({
+      exportLabel: 'Exporter utilisateurs',
+      quickActionLabel: 'Nouvel utilisateur',
+      onExport: () => downloadJson(`xelal-utilisateurs-${new Date().toISOString().slice(0, 10)}.json`, { users, invitations, parentLinks }),
+      onQuickAction: () => {
+        const section = document.getElementById('admin-users-invite');
+        section?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      },
+    });
+
+    return () => onRegisterHeaderActions?.({});
+  }, [users, invitations, parentLinks, onRegisterHeaderActions]);
+
   const filteredUsers = useMemo(() => {
     return users.filter((user) => {
       const roleMatches =
@@ -399,12 +845,41 @@ function UsersManagementView({ session, onDataChanged }: { session?: AuthSession
     });
   }, [filter, query, users]);
 
+  const parentUsers = useMemo(() => users.filter((user) => user.role === 'parent'), [users]);
+  const studentUsers = useMemo(() => users.filter((user) => user.role === 'student'), [users]);
+  const parentFamilies = useMemo(() => {
+    return parentUsers.map((parent) => ({
+      parent,
+      children: parentLinks.filter((link) => link.parentUserId === parent.id),
+    }));
+  }, [parentUsers, parentLinks]);
+
   const handleInvite = async () => {
     if (!session) return;
     setError(null);
     setSuccess(null);
 
     try {
+      if (inviteRole === 'PARENT') {
+        const result = await adminService.registerParent(session, {
+          schoolId: 'school_xelal_1',
+          firstName: inviteFirstName,
+          lastName: inviteLastName,
+          email: inviteEmail || undefined,
+          phone: invitePhone,
+        });
+
+        setUsers((prev) => [...prev, result.user]);
+        setSuccess(`Parent enregistré: ${result.user.firstName} ${result.user.lastName}. Rattachez-le maintenant à un élève pour activer WhatsApp.`);
+        setInviteEmail('');
+        setInvitePhone('');
+        setInviteFirstName('');
+        setInviteLastName('');
+        setInviteRole('TEACHER');
+        onDataChanged?.();
+        return;
+      }
+
       const result = await adminService.inviteUser(session, {
         schoolId: 'school_xelal_1',
         firstName: inviteFirstName,
@@ -475,15 +950,62 @@ function UsersManagementView({ session, onDataChanged }: { session?: AuthSession
     }
   };
 
+  const handleCreateParentLink = async () => {
+    if (!session || !selectedParentId || !selectedStudentId) return;
+    setError(null);
+    setSuccess(null);
+
+    try {
+      const created = await adminService.createParentStudentLink(session, {
+        parentUserId: selectedParentId,
+        studentId: selectedStudentId,
+        relationship: selectedRelationship,
+        isPrimary: isPrimaryLink,
+      });
+      setParentLinks((prev) => {
+        const next = isPrimaryLink
+          ? prev.map((item) =>
+              item.studentId === created.studentId ? { ...item, isPrimary: false } : item,
+            )
+          : prev;
+        return [...next, created];
+      });
+      setSuccess(
+        created.welcomeDelivery?.delivered
+          ? `Lien créé : ${created.parentName} → ${created.studentName}. Le parent a reçu un message WhatsApp de bienvenue.`
+          : `Lien créé : ${created.parentName} → ${created.studentName}. ${created.parentPhone ? "Le parent n'a pas encore reçu de confirmation WhatsApp." : "Ajoutez un numéro WhatsApp pour permettre les messages automatiques."}`,
+      );
+      setSelectedStudentId('');
+    } catch (currentError) {
+      setError(currentError instanceof Error ? currentError.message : 'Liaison impossible.');
+    }
+  };
+
+  const handleDeleteParentLink = async (linkId: string) => {
+    if (!session) return;
+    setError(null);
+    setSuccess(null);
+
+    try {
+      await adminService.deleteParentStudentLink(session, linkId);
+      setParentLinks((prev) => prev.filter((item) => item.id !== linkId));
+      setSuccess('Lien parent-élève supprimé.');
+    } catch (currentError) {
+      setError(currentError instanceof Error ? currentError.message : 'Suppression impossible.');
+    }
+  };
+
   return (
     <div className="space-y-8">
       <div className="grid grid-cols-1 lg:grid-cols-[1.2fr_0.8fr] gap-6">
-        <div className="bg-white p-5 rounded-2xl border border-border shadow-sm">
-          <h3 className="text-sm font-bold text-text-main mb-4">Inviter un utilisateur</h3>
+        <div id="admin-users-invite" className="bg-white p-5 rounded-2xl border border-border shadow-sm">
+          <h3 className="text-sm font-bold text-text-main mb-4">
+            {inviteRole === 'PARENT' ? 'Enregistrer un parent WhatsApp' : 'Inviter un utilisateur'}
+          </h3>
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <input value={inviteFirstName} onChange={(e) => setInviteFirstName(e.target.value)} placeholder="Prénom" className="px-4 py-3 bg-bg border border-border rounded-xl text-sm outline-none" />
             <input value={inviteLastName} onChange={(e) => setInviteLastName(e.target.value)} placeholder="Nom" className="px-4 py-3 bg-bg border border-border rounded-xl text-sm outline-none" />
-            <input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="email@ecole.com" className="px-4 py-3 bg-bg border border-border rounded-xl text-sm outline-none md:col-span-2" />
+            <input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder={inviteRole === 'PARENT' ? 'Email (optionnel)' : 'email@ecole.com'} className="px-4 py-3 bg-bg border border-border rounded-xl text-sm outline-none md:col-span-2" />
             <input value={invitePhone} onChange={(e) => setInvitePhone(e.target.value)} placeholder="+221 77 000 00 00" className="px-4 py-3 bg-bg border border-border rounded-xl text-sm outline-none" />
             <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value as 'TEACHER' | 'STUDENT' | 'PARENT' | 'ADMIN')} className="px-4 py-3 bg-bg border border-border rounded-xl text-sm outline-none">
               <option value="TEACHER">Enseignant</option>
@@ -492,9 +1014,14 @@ function UsersManagementView({ session, onDataChanged }: { session?: AuthSession
               <option value="ADMIN">Admin</option>
             </select>
             <button onClick={handleInvite} className="px-4 py-3 bg-accent text-white rounded-xl font-bold text-sm shadow-lg shadow-blue-100">
-              Créer l'invitation
+              {inviteRole === 'PARENT' ? 'Enregistrer le parent' : "Créer l'invitation"}
             </button>
           </div>
+          {inviteRole === 'PARENT' && (
+            <p className="mt-4 text-xs text-text-muted">
+              Le parent n’a pas besoin d’un dashboard pour l’instant. Son numéro WhatsApp est enregistré ici, puis l’école le relie à un ou plusieurs élèves pour activer les messages automatiques.
+            </p>
+          )}
         </div>
 
         <div className="bg-white p-5 rounded-2xl border border-border shadow-sm">
@@ -524,6 +1051,84 @@ function UsersManagementView({ session, onDataChanged }: { session?: AuthSession
               </div>
             ))}
             {!invitations.length && <p className="text-sm text-text-muted">Aucune invitation.</p>}
+          </div>
+        </div>
+      </div>
+
+      <div className="grid grid-cols-1 lg:grid-cols-[1.1fr_0.9fr] gap-6">
+        <div className="bg-white p-5 rounded-2xl border border-border shadow-sm">
+          <h3 className="text-sm font-bold text-text-main mb-4">Lier un parent à un ou plusieurs élèves</h3>
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+            <select value={selectedParentId} onChange={(e) => setSelectedParentId(e.target.value)} className="px-4 py-3 bg-bg border border-border rounded-xl text-sm outline-none">
+              <option value="">— Parent —</option>
+              {parentUsers.map((parent) => (
+                <option key={parent.id} value={parent.id}>
+                  {parent.firstName} {parent.lastName} {parent.phone ? `• ${parent.phone}` : ''}
+                </option>
+              ))}
+            </select>
+            <select value={selectedStudentId} onChange={(e) => setSelectedStudentId(e.target.value)} className="px-4 py-3 bg-bg border border-border rounded-xl text-sm outline-none">
+              <option value="">— Élève —</option>
+              {studentUsers.map((student) => (
+                <option key={student.id} value={student.id}>
+                  {student.firstName} {student.lastName}
+                </option>
+              ))}
+            </select>
+            <select value={selectedRelationship} onChange={(e) => setSelectedRelationship(e.target.value as 'MOTHER' | 'FATHER' | 'TUTOR')} className="px-4 py-3 bg-bg border border-border rounded-xl text-sm outline-none">
+              <option value="MOTHER">Mère</option>
+              <option value="FATHER">Père</option>
+              <option value="TUTOR">Tuteur</option>
+            </select>
+            <label className="flex items-center gap-3 px-4 py-3 bg-bg border border-border rounded-xl text-sm font-medium text-text-main">
+              <input type="checkbox" checked={isPrimaryLink} onChange={(e) => setIsPrimaryLink(e.target.checked)} />
+              Contact principal pour cet élève
+            </label>
+            <button onClick={handleCreateParentLink} className="px-4 py-3 bg-primary text-white rounded-xl font-bold text-sm shadow-sm md:col-span-2">
+              Ajouter le parent à l’élève
+            </button>
+          </div>
+          <p className="mt-4 text-xs text-text-muted">
+            Une fois le lien créé, le parent pourra recevoir les messages WhatsApp et poser des questions sur ses enfants liés.
+          </p>
+        </div>
+
+        <div className="bg-white p-5 rounded-2xl border border-border shadow-sm">
+          <h3 className="text-sm font-bold text-text-main mb-4">Familles enregistrées</h3>
+          <div className="space-y-3 max-h-80 overflow-y-auto">
+            {parentFamilies.map(({ parent, children }) => (
+              <div key={parent.id} className="rounded-2xl border border-border bg-bg/50 px-4 py-4">
+                <div className="flex items-start justify-between gap-4">
+                  <div>
+                    <p className="text-sm font-bold text-text-main">{parent.firstName} {parent.lastName}</p>
+                    <p className="text-[10px] uppercase tracking-widest text-text-muted font-bold mt-1">
+                      {parent.phone || 'Téléphone manquant'}
+                    </p>
+                  </div>
+                  <span className="rounded-full bg-primary/10 px-3 py-1 text-[10px] font-bold uppercase text-primary">
+                    {children.length} enfant(s)
+                  </span>
+                </div>
+                <div className="mt-3 space-y-2">
+                  {children.length ? children.map((link) => (
+                    <div key={link.id} className="rounded-xl border border-border bg-white px-3 py-3 flex items-center justify-between gap-3">
+                      <div>
+                        <p className="text-sm font-semibold text-text-main">{link.studentName}</p>
+                        <p className="text-[10px] uppercase tracking-widest text-text-muted">
+                          {link.relationshipLabel} {link.isPrimary ? '• principal' : ''}
+                        </p>
+                      </div>
+                      <button onClick={() => handleDeleteParentLink(link.id)} className="rounded-xl bg-danger/10 px-3 py-2 text-[10px] font-bold uppercase tracking-wider text-danger">
+                        Retirer
+                      </button>
+                    </div>
+                  )) : (
+                    <p className="text-xs text-text-muted">Aucun élève lié pour l’instant.</p>
+                  )}
+                </div>
+              </div>
+            ))}
+            {!parentFamilies.length && <p className="text-sm text-text-muted">Aucun parent enregistré.</p>}
           </div>
         </div>
       </div>
@@ -837,7 +1442,13 @@ function SubjectsManagerView({ session }: { session?: AuthSession }) {
   );
 }
 
-function AssignmentsView({ session }: { session?: AuthSession }) {
+function AssignmentsView({
+  session,
+  onRegisterHeaderActions,
+}: {
+  session?: AuthSession;
+  onRegisterHeaderActions?: (actions: HeaderActionState) => void;
+}) {
   const [assignments, setAssignments] = useState<AdminAssignmentRecord[]>([]);
   const [classes, setClasses] = useState<AdminClassRecord[]>([]);
   const [subjects, setSubjects] = useState<AdminSubjectRecord[]>([]);
@@ -879,6 +1490,20 @@ function AssignmentsView({ session }: { session?: AuthSession }) {
     void load();
     return () => { isMounted = false; };
   }, [session]);
+
+  useEffect(() => {
+    onRegisterHeaderActions?.({
+      exportLabel: 'Exporter affectations',
+      quickActionLabel: 'Nouvelle affectation',
+      onExport: () => downloadJson(`xelal-affectations-${new Date().toISOString().slice(0, 10)}.json`, { assignments, classes, subjects, teachers }),
+      onQuickAction: () => {
+        const section = document.getElementById('admin-assignments-form');
+        section?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+      },
+    });
+
+    return () => onRegisterHeaderActions?.({});
+  }, [assignments, classes, subjects, teachers, onRegisterHeaderActions]);
 
   const handleCreate = async () => {
     if (!session || !selTeacher || !selClass || !selSubject) return;
@@ -930,7 +1555,7 @@ function AssignmentsView({ session }: { session?: AuthSession }) {
   return (
     <div className="space-y-8">
       {/* Formulaire d'ajout */}
-      <div className="bg-white p-6 rounded-2xl border border-border shadow-sm">
+      <div id="admin-assignments-form" className="bg-white p-6 rounded-2xl border border-border shadow-sm">
         <h3 className="text-sm font-bold text-text-main mb-5">Affecter un enseignant</h3>
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
           <select
@@ -1058,14 +1683,112 @@ function AssignmentsView({ session }: { session?: AuthSession }) {
   );
 }
 
-function ReportsView() {
+function ReportsView({
+  session,
+  onRegisterHeaderActions,
+}: {
+  session?: AuthSession;
+  onRegisterHeaderActions?: (actions: HeaderActionState) => void;
+}) {
+  const [classes, setClasses] = useState<AdminClassRecord[]>([]);
+  const [overview, setOverview] = useState<AdminOverview | null>(null);
+  const [stats, setStats] = useState<AdminRecommendationStats | null>(null);
+  const [selectedClassId, setSelectedClassId] = useState('');
+  const [report, setReport] = useState<AdminClassReport | null>(null);
+  const [error, setError] = useState<string | null>(null);
+  const [isGenerating, setIsGenerating] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const loadClasses = async () => {
+      if (!session) {
+        setError('Session admin absente.');
+        return;
+      }
+
+      try {
+        const [nextClasses, nextOverview, nextStats] = await Promise.all([
+          adminService.fetchClasses(session),
+          adminService.fetchOverview(session),
+          adminService.fetchRecommendationStats(session),
+        ]);
+        if (!isMounted) return;
+        setClasses(nextClasses);
+        setOverview(nextOverview);
+        setStats(nextStats);
+        setSelectedClassId((current) => current || nextClasses[0]?.id || '');
+        setError(null);
+      } catch (currentError) {
+        if (!isMounted) return;
+        setError(currentError instanceof Error ? currentError.message : 'Classes indisponibles.');
+      }
+    };
+
+    void loadClasses();
+    return () => {
+      isMounted = false;
+    };
+  }, [session]);
+
+  useEffect(() => {
+    onRegisterHeaderActions?.({
+      exportLabel: 'Exporter rapports',
+      quickActionLabel: 'Générer un rapport',
+      onExport: () =>
+        downloadJson(`xelal-rapports-${new Date().toISOString().slice(0, 10)}.json`, {
+          overview,
+          stats,
+          classes,
+          currentReport: report,
+        }),
+      onQuickAction: () => {
+        if (!isGenerating && selectedClassId) {
+          void handleGenerate();
+        }
+      },
+    });
+
+    return () => onRegisterHeaderActions?.({});
+  }, [overview, stats, classes, report, selectedClassId, isGenerating, onRegisterHeaderActions]);
+
+  const handleGenerate = async () => {
+    if (!session || !selectedClassId) return;
+    setIsGenerating(true);
+    setError(null);
+
+    try {
+      const nextReport = await adminService.generateClassReport(session, selectedClassId);
+      setReport(nextReport);
+    } catch (currentError) {
+      setError(currentError instanceof Error ? currentError.message : 'Rapport indisponible.');
+    } finally {
+      setIsGenerating(false);
+    }
+  };
+
   return (
     <div className="space-y-8">
       <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
         {[
-          { title: "Rapport de Fréquentation", desc: "Analyse mensuelle des absences par classe.", date: "Généré il y a 2h", icon: FileText },
-          { title: "Performance Scolaire", desc: "Comparatif des moyennes trimestrielles.", date: "Généré hier", icon: TrendingUp },
-          { title: "Audit de Sécurité", desc: "Logs de connexion et accès admin.", date: "12 Oct 2023", icon: FileText },
+          {
+            title: 'Suivi des invitations',
+            desc: `${overview?.totals.invitationsPending ?? 0} invitation(s) en attente d’activation.`,
+            date: `${overview?.totals.pendingUsers ?? 0} compte(s) encore en attente`,
+            icon: Mail,
+          },
+          {
+            title: 'Couverture IA',
+            desc: `${stats?.totals.total ?? 0} recommandation(s) générées dans l’école.`,
+            date: `${stats?.totals.followThroughRate ?? 0}% avec envoi WhatsApp`,
+            icon: TrendingUp,
+          },
+          {
+            title: 'Vue des classes',
+            desc: `${classes.length} classe(s) suivies dans la base active.`,
+            date: `${classes.reduce((sum, item) => sum + item.studentsCount, 0)} élève(s) recensés`,
+            icon: FileText,
+          },
         ].map((report, i) => (
           <div key={i} className="polished-card p-6 flex flex-col justify-between">
              <div>
@@ -1077,7 +1800,7 @@ function ReportsView() {
              </div>
              <div className="flex items-center justify-between mt-auto pt-4 border-t border-border">
                 <span className="text-[9px] font-bold text-text-muted uppercase tracking-widest">{report.date}</span>
-                <button className="text-xs font-bold text-accent hover:underline">Voir</button>
+                <button onClick={handleGenerate} className="text-xs font-bold text-accent hover:underline">Voir</button>
              </div>
           </div>
         ))}
@@ -1091,27 +1814,205 @@ function ReportsView() {
              Obtenez une analyse complète de la santé pédagogique de votre établissement. Notre IA croise les notes, 
              les absences et les feedbacks pour proposer des axes d'amélioration stratégiques.
            </p>
-           <button className="px-8 py-4 bg-white text-primary font-bold rounded-xl shadow-2xl hover:bg-blue-50 transition-all text-sm">
-             Lancer l'IA Analytics
-           </button>
+           <div className="flex flex-col md:flex-row gap-4">
+             <select
+               value={selectedClassId}
+               onChange={(event) => setSelectedClassId(event.target.value)}
+               className="px-4 py-3 rounded-xl text-sm text-primary font-semibold bg-white/95"
+             >
+               <option value="">Sélectionner une classe</option>
+               {classes.map((item) => (
+                 <option key={item.id} value={item.id}>
+                   {item.name}
+                 </option>
+               ))}
+             </select>
+             <button
+               onClick={handleGenerate}
+               disabled={!selectedClassId || isGenerating}
+               className="px-8 py-4 bg-white text-primary font-bold rounded-xl shadow-2xl hover:bg-blue-50 transition-all text-sm disabled:opacity-60"
+             >
+               {isGenerating ? 'Génération...' : "Lancer l'IA Analytics"}
+             </button>
+           </div>
         </div>
       </div>
+
+      {error && (
+        <div className="rounded-2xl border border-danger/20 bg-danger/5 px-4 py-3 text-sm font-semibold text-danger">
+          {error}
+        </div>
+      )}
+
+      {report && (
+        <div className="polished-card p-8 space-y-8">
+          <div className="flex flex-col md:flex-row md:items-start md:justify-between gap-4">
+            <div>
+              <div className="flex items-center gap-2 text-primary font-bold text-sm mb-2">
+                <Sparkles size={16} />
+                Rapport IA classe
+              </div>
+              <h3 className="text-2xl font-extrabold tracking-tight text-text-main">{report.className}</h3>
+              <p className="text-sm text-text-muted mt-2">{report.summary}</p>
+            </div>
+            <span className="rounded-full bg-primary/10 text-primary px-4 py-2 text-xs font-bold uppercase">
+              Risque {report.riskLevel}
+            </span>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+            {[
+              { label: 'Moyenne classe', value: report.classSignals.classAverage ?? 'N/A' },
+              { label: 'Taux absence', value: `${report.classSignals.absenceRate}%` },
+              { label: 'Élèves à risque', value: report.classSignals.studentsAtRisk },
+              { label: 'Score IA', value: report.classSignals.riskScore },
+            ].map((item) => (
+              <div key={item.label} className="rounded-2xl border border-border bg-white px-5 py-4">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted">{item.label}</p>
+                <p className="mt-3 text-3xl font-extrabold tracking-tight text-text-main">{item.value}</p>
+              </div>
+            ))}
+          </div>
+
+          <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
+            <div className="space-y-4">
+              <h4 className="text-sm font-bold text-text-main">Élèves à suivre en priorité</h4>
+              {report.studentsAtRisk.map((student) => (
+                <div key={student.studentId} className="rounded-2xl border border-border bg-bg px-4 py-4">
+                  <div className="flex items-center justify-between gap-4">
+                    <div>
+                      <p className="font-bold text-text-main">{student.studentName}</p>
+                      <p className="text-xs text-text-muted">
+                        Moyenne {student.averageGrade ?? 'N/A'} / Absences {student.absenceRate}% / Evolution {student.gradeEvolution}
+                      </p>
+                    </div>
+                    <span className="rounded-full bg-danger/10 px-3 py-1 text-[10px] font-bold uppercase text-danger">
+                      {student.riskLevel}
+                    </span>
+                  </div>
+                </div>
+              ))}
+            </div>
+
+            <div className="space-y-4">
+              <h4 className="text-sm font-bold text-text-main">Recommandations admin</h4>
+              {report.recommendations.map((item, index) => (
+                <div key={`${item}-${index}`} className="rounded-2xl border border-primary/10 bg-primary/5 px-4 py-4 text-sm text-text-main">
+                  {item}
+                </div>
+              ))}
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 }
 
-function AlertsView() {
+function AlertsView({
+  session,
+  onRegisterHeaderActions,
+  onNavigateTab,
+}: {
+  session?: AuthSession;
+  onRegisterHeaderActions?: (actions: HeaderActionState) => void;
+  onNavigateTab?: (tab: string) => void;
+}) {
+  const [alerts, setAlerts] = useState<Array<{ type: 'critical' | 'warning' | 'info'; title: string; time: string; desc: string }>>([]);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    let isMounted = true;
+
+    const load = async () => {
+      if (!session) {
+        setError('Session admin absente.');
+        return;
+      }
+
+      try {
+        const [overview, classes, stats] = await Promise.all([
+          adminService.fetchOverview(session),
+          adminService.fetchClasses(session),
+          adminService.fetchRecommendationStats(session),
+        ]);
+
+        if (!isMounted) return;
+
+        const nextAlerts: Array<{ type: 'critical' | 'warning' | 'info'; title: string; time: string; desc: string }> = [];
+
+        if (overview.totals.invitationsPending > 0) {
+          nextAlerts.push({
+            type: 'critical',
+            title: 'Invitations en attente d’activation',
+            time: 'Mise à jour immédiate',
+            desc: `${overview.totals.invitationsPending} invitation(s) sont encore en attente. Un suivi admin est recommandé.`,
+          });
+        }
+
+        if (stats.totals.followThroughRate < 50 && stats.totals.total > 0) {
+          nextAlerts.push({
+            type: 'warning',
+            title: 'Faible taux de suivi des recommandations',
+            time: 'Calculé aujourd’hui',
+            desc: `Seulement ${stats.totals.followThroughRate}% des recommandations ont donné lieu à un envoi WhatsApp.`,
+          });
+        }
+
+        const underAssignedClasses = classes.filter((item) => item.teachersCount === 0);
+        if (underAssignedClasses.length > 0) {
+          nextAlerts.push({
+            type: 'warning',
+            title: 'Classes sans enseignant affecté',
+            time: 'Contrôle base de données',
+            desc: `${underAssignedClasses.length} classe(s) n’ont encore aucun enseignant rattaché.`,
+          });
+        }
+
+        nextAlerts.push({
+          type: 'info',
+          title: 'Synchronisation établissement disponible',
+          time: new Intl.DateTimeFormat('fr-FR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date()),
+          desc: `${classes.length} classes et ${overview.totals.users} comptes sont actuellement chargés depuis la base active.`,
+        });
+
+        setAlerts(nextAlerts);
+        setError(null);
+      } catch (currentError) {
+        if (!isMounted) return;
+        setError(currentError instanceof Error ? currentError.message : 'Alertes indisponibles.');
+      }
+    };
+
+    void load();
+    return () => {
+      isMounted = false;
+    };
+  }, [session]);
+
+  useEffect(() => {
+    onRegisterHeaderActions?.({
+      exportLabel: 'Exporter alertes',
+      quickActionLabel: 'Traiter les alertes',
+      onExport: () => downloadJson(`xelal-alertes-${new Date().toISOString().slice(0, 10)}.json`, alerts),
+      onQuickAction: () => onNavigateTab?.('utilisateurs'),
+    });
+
+    return () => onRegisterHeaderActions?.({});
+  }, [alerts, onRegisterHeaderActions, onNavigateTab]);
+
   return (
     <div className="space-y-4 max-w-4xl">
-      {[
-        { type: 'critical', title: "Espace stockage saturé (Rapports)", time: "Il y a 10 min", desc: "Le serveur de stockage des rapports PDF atteint 95% de sa capacité. Une purge est recommandée." },
-        { type: 'warning', title: "Baisse de performance (Maths - 3ème A)", time: "Il y a 1h", desc: "Une baisse moyenne de 12% est détectée sur le dernier contrôle de Mathématiques pour la classe de 3ème A." },
-        { type: 'info', title: "Mise à jour système effectuée", time: "Hier, 22:00", desc: "La version v1.2.4 a été déployée avec succès. Nouveaux filtres disponibles dans le module Utilisateurs." },
-        { type: 'warning', title: "Taux d'absentéisme élevé (2nde L)", time: "14 Oct 2023", desc: "Le taux d'absence a dépassé le seuil de 15% pour la classe de 2nde L cette semaine." },
-      ].map((alert, i) => (
+      {error && (
+        <div className="rounded-2xl border border-danger/20 bg-danger/5 px-4 py-3 text-sm font-semibold text-danger">
+          {error}
+        </div>
+      )}
+
+      {alerts.map((alert, i) => (
         <div key={i} className={`p-6 rounded-2xl border flex gap-4 transition-all hover:translate-x-1 cursor-pointer ${
           alert.type === 'critical' ? 'bg-danger/5 border-danger/10 text-danger' : 
-          alert.type === 'warning' ? 'bg-warning/5 border-warning/10 text-warning' : 
+          alert.type === 'warning' ? 'bg-warning/5 border-warning/10 text-warning' :
           'bg-primary/5 border-primary/10 text-primary'
         }`}>
           <div className="flex-shrink-0 mt-1">
@@ -1126,6 +2027,382 @@ function AlertsView() {
           </div>
         </div>
       ))}
+    </div>
+  );
+}
+
+// ─── Emploi du temps ─────────────────────────────────────────────────────────
+
+const WEEK_DAYS: WeekDay[] = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+
+const SLOT_COLORS: Record<string, string> = {
+  'Mathématiques':  'bg-blue-50   border-blue-200   text-blue-800',
+  'Français':       'bg-violet-50 border-violet-200 text-violet-800',
+  'Physique-Chimie':'bg-emerald-50 border-emerald-200 text-emerald-800',
+  'Anglais':        'bg-amber-50  border-amber-200  text-amber-800',
+  'Histoire-Géo':   'bg-rose-50   border-rose-200   text-rose-800',
+  'SVT':            'bg-teal-50   border-teal-200   text-teal-800',
+  'Philosophie':    'bg-purple-50 border-purple-200 text-purple-800',
+  'EPS':            'bg-orange-50 border-orange-200 text-orange-800',
+};
+const defaultSlotColor = 'bg-gray-50 border-gray-200 text-gray-800';
+
+function slotColor(subjectName: string) {
+  return SLOT_COLORS[subjectName] ?? defaultSlotColor;
+}
+
+function ScheduleView({
+  session,
+  onRegisterHeaderActions,
+}: {
+  session?: AuthSession;
+  onRegisterHeaderActions: (actions: HeaderActionState) => void;
+}) {
+  const [slots, setSlots] = useState<AdminTimeSlotRecord[]>([]);
+  const [classes, setClasses] = useState<AdminClassRecord[]>([]);
+  const [subjects, setSubjects] = useState<AdminSubjectRecord[]>([]);
+  const [assignments, setAssignments] = useState<AdminAssignmentRecord[]>([]);
+  const [selectedClassId, setSelectedClassId] = useState('');
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [showForm, setShowForm] = useState(false);
+  const [formDay, setFormDay] = useState<WeekDay>('Lundi');
+  const [formStart, setFormStart] = useState('08:00');
+  const [formEnd, setFormEnd] = useState('10:00');
+  const [formSubjectId, setFormSubjectId] = useState('');
+  const [formTeacherId, setFormTeacherId] = useState('');
+  const [formRoom, setFormRoom] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [formError, setFormError] = useState<string | null>(null);
+
+  useEffect(() => {
+    onRegisterHeaderActions({
+      quickActionLabel: 'Nouveau créneau',
+      onQuickAction: () => setShowForm(true),
+    });
+  }, [onRegisterHeaderActions]);
+
+  useEffect(() => {
+    if (!session) return;
+    let mounted = true;
+    setLoading(true);
+
+    Promise.all([
+      adminService.fetchClasses(session),
+      adminService.fetchSubjects(session),
+      adminService.fetchAssignments(session),
+    ])
+      .then(([cls, sub, asgn]) => {
+        if (!mounted) return;
+        setClasses(cls);
+        setSubjects(sub);
+        setAssignments(asgn);
+        const firstId = cls[0]?.id ?? '';
+        setSelectedClassId(firstId);
+        setFormSubjectId(sub[0]?.id ?? '');
+      })
+      .catch((err) => {
+        if (mounted) setError(err instanceof Error ? err.message : 'Chargement impossible.');
+      })
+      .finally(() => { if (mounted) setLoading(false); });
+
+    return () => { mounted = false; };
+  }, [session]);
+
+  useEffect(() => {
+    if (!session || !selectedClassId) return;
+    let mounted = true;
+    adminService.fetchTimeSlots(session, selectedClassId)
+      .then((data) => { if (mounted) setSlots(data); })
+      .catch(() => { if (mounted) setSlots([]); });
+    return () => { mounted = false; };
+  }, [session, selectedClassId]);
+
+  // Teachers that have an assignment for the selected class
+  const eligibleTeachers = useMemo(() => {
+    const teacherIds = Array.from(new Set(
+      assignments.filter((a) => a.classId === selectedClassId).map((a) => a.teacherId),
+    ));
+    return assignments
+      .filter((a) => teacherIds.includes(a.teacherId))
+      .reduce<{ id: string; name: string }[]>((acc, a) => {
+        if (!acc.find((t) => t.id === a.teacherId)) {
+          acc.push({ id: a.teacherId, name: a.teacherName });
+        }
+        return acc;
+      }, []);
+  }, [assignments, selectedClassId]);
+
+  // Subjects assigned for the selected class
+  const eligibleSubjects = useMemo(() =>
+    assignments.filter((a) => a.classId === selectedClassId).map((a) => ({
+      id: a.subjectId,
+      name: a.subjectName,
+    })),
+  [assignments, selectedClassId]);
+
+  useEffect(() => {
+    setFormSubjectId(eligibleSubjects[0]?.id ?? '');
+    setFormTeacherId(eligibleTeachers[0]?.id ?? '');
+  }, [eligibleSubjects, eligibleTeachers]);
+
+  const slotsByDay = useMemo(() => {
+    const map: Record<WeekDay, AdminTimeSlotRecord[]> = {
+      Lundi: [], Mardi: [], Mercredi: [], Jeudi: [], Vendredi: [], Samedi: [],
+    };
+    for (const slot of slots) {
+      if (map[slot.day]) map[slot.day].push(slot);
+    }
+    for (const day of WEEK_DAYS) {
+      map[day].sort((a, b) => a.startTime.localeCompare(b.startTime));
+    }
+    return map;
+  }, [slots]);
+
+  const handleDelete = async (slotId: string) => {
+    if (!session) return;
+    try {
+      await adminService.deleteTimeSlot(session, slotId);
+      setSlots((prev) => prev.filter((s) => s.id !== slotId));
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Suppression impossible.');
+    }
+  };
+
+  const handleCreate = async () => {
+    if (!session || !selectedClassId || !formSubjectId || !formTeacherId) {
+      setFormError('Tous les champs sont obligatoires.');
+      return;
+    }
+    setSaving(true);
+    setFormError(null);
+    try {
+      const created = await adminService.createTimeSlot(session, {
+        classId: selectedClassId,
+        subjectId: formSubjectId,
+        teacherId: formTeacherId,
+        day: formDay,
+        startTime: formStart,
+        endTime: formEnd,
+        room: formRoom.trim() || undefined,
+      });
+      setSlots((prev) => [...prev, created]);
+      setShowForm(false);
+      setFormRoom('');
+    } catch (err) {
+      setFormError(err instanceof Error ? err.message : 'Création impossible.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const selectedClass = classes.find((c) => c.id === selectedClassId);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center h-48 text-text-muted text-sm font-medium">
+        Chargement de l'emploi du temps…
+      </div>
+    );
+  }
+
+  return (
+    <div className="space-y-6">
+      {error && (
+        <div className="rounded-2xl border border-red-100 bg-red-50 px-4 py-3 text-xs font-semibold text-red-700">
+          {error}
+        </div>
+      )}
+
+      {/* Class selector */}
+      <div className="flex items-center gap-4">
+        <label className="text-xs font-bold text-text-muted uppercase tracking-widest">Classe</label>
+        <div className="flex gap-2 flex-wrap">
+          {classes.map((cls) => (
+            <button
+              key={cls.id}
+              onClick={() => setSelectedClassId(cls.id)}
+              className={`px-4 py-2 rounded-xl text-xs font-bold transition-all ${
+                selectedClassId === cls.id
+                  ? 'bg-primary text-white shadow-md'
+                  : 'bg-white border border-border text-text-muted hover:bg-bg'
+              }`}
+            >
+              {cls.name}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {classes.length === 0 && (
+        <div className="rounded-2xl border border-border bg-white px-6 py-8 text-center">
+          <Clock className="mx-auto mb-3 text-text-muted" size={32} strokeWidth={1.5} />
+          <p className="text-sm font-semibold text-text-main">Aucune classe créée</p>
+          <p className="mt-1 text-xs text-text-muted">Créez d'abord des classes dans l'onglet Établissement.</p>
+        </div>
+      )}
+
+      {selectedClass && (
+        <>
+          {/* Add slot form */}
+          <AnimatePresence>
+            {showForm && (
+              <motion.div
+                initial={{ opacity: 0, y: -8 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -8 }}
+                className="rounded-2xl border border-border bg-white p-6 shadow-sm"
+              >
+                <div className="flex items-center justify-between mb-4">
+                  <h3 className="text-sm font-bold text-text-main">Nouveau créneau — {selectedClass.name}</h3>
+                  <button onClick={() => setShowForm(false)} className="text-text-muted hover:text-text-main transition-colors">
+                    <X size={16} />
+                  </button>
+                </div>
+
+                {formError && (
+                  <p className="mb-3 text-xs font-semibold text-red-600">{formError}</p>
+                )}
+
+                <div className="grid grid-cols-2 gap-4 mb-4">
+                  <div>
+                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-1 block">Jour</label>
+                    <select
+                      value={formDay}
+                      onChange={(e) => setFormDay(e.target.value as WeekDay)}
+                      className="w-full border border-border rounded-xl px-3 py-2 text-xs font-semibold bg-bg focus:outline-none focus:ring-1 focus:ring-primary"
+                    >
+                      {WEEK_DAYS.map((d) => <option key={d} value={d}>{d}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-1 block">Salle (optionnel)</label>
+                    <input
+                      type="text"
+                      placeholder="ex. Salle A1"
+                      value={formRoom}
+                      onChange={(e) => setFormRoom(e.target.value)}
+                      className="w-full border border-border rounded-xl px-3 py-2 text-xs font-semibold bg-bg focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-1 block">Début</label>
+                    <input
+                      type="time"
+                      value={formStart}
+                      onChange={(e) => setFormStart(e.target.value)}
+                      className="w-full border border-border rounded-xl px-3 py-2 text-xs font-semibold bg-bg focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-1 block">Fin</label>
+                    <input
+                      type="time"
+                      value={formEnd}
+                      onChange={(e) => setFormEnd(e.target.value)}
+                      className="w-full border border-border rounded-xl px-3 py-2 text-xs font-semibold bg-bg focus:outline-none focus:ring-1 focus:ring-primary"
+                    />
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-1 block">Matière</label>
+                    <select
+                      value={formSubjectId}
+                      onChange={(e) => setFormSubjectId(e.target.value)}
+                      className="w-full border border-border rounded-xl px-3 py-2 text-xs font-semibold bg-bg focus:outline-none focus:ring-1 focus:ring-primary"
+                    >
+                      {eligibleSubjects.length === 0 && (
+                        <option value="">Aucune matière affectée à cette classe</option>
+                      )}
+                      {eligibleSubjects.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+                    </select>
+                  </div>
+                  <div>
+                    <label className="text-[10px] font-bold text-text-muted uppercase tracking-widest mb-1 block">Enseignant</label>
+                    <select
+                      value={formTeacherId}
+                      onChange={(e) => setFormTeacherId(e.target.value)}
+                      className="w-full border border-border rounded-xl px-3 py-2 text-xs font-semibold bg-bg focus:outline-none focus:ring-1 focus:ring-primary"
+                    >
+                      {eligibleTeachers.length === 0 && (
+                        <option value="">Aucun enseignant affecté à cette classe</option>
+                      )}
+                      {eligibleTeachers.map((t) => <option key={t.id} value={t.id}>{t.name}</option>)}
+                    </select>
+                  </div>
+                </div>
+
+                <div className="flex justify-end gap-2">
+                  <button
+                    onClick={() => setShowForm(false)}
+                    className="px-4 py-2 rounded-xl text-xs font-bold border border-border text-text-muted hover:bg-bg transition-all"
+                  >
+                    Annuler
+                  </button>
+                  <button
+                    onClick={handleCreate}
+                    disabled={saving || eligibleSubjects.length === 0 || eligibleTeachers.length === 0}
+                    className="px-5 py-2 rounded-xl text-xs font-bold bg-primary text-white hover:bg-primary/90 disabled:opacity-50 transition-all flex items-center gap-2"
+                  >
+                    {saving ? 'Enregistrement…' : <><Plus size={13} /> Ajouter le créneau</>}
+                  </button>
+                </div>
+              </motion.div>
+            )}
+          </AnimatePresence>
+
+          {/* Weekly grid */}
+          <div className="grid grid-cols-6 gap-3">
+            {WEEK_DAYS.map((day) => (
+              <div key={day} className="flex flex-col gap-2">
+                <div className="text-[10px] font-extrabold text-text-muted uppercase tracking-widest text-center py-2 border-b border-border">
+                  {day}
+                </div>
+
+                {slotsByDay[day].length === 0 && (
+                  <div className="rounded-xl border border-dashed border-border bg-bg h-16 flex items-center justify-center">
+                    <span className="text-[9px] text-text-muted font-medium">—</span>
+                  </div>
+                )}
+
+                {slotsByDay[day].map((slot) => (
+                  <div
+                    key={slot.id}
+                    className={`rounded-xl border p-2.5 relative group ${slotColor(slot.subjectName)}`}
+                  >
+                    <button
+                      onClick={() => handleDelete(slot.id)}
+                      className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity text-current/40 hover:text-red-500"
+                    >
+                      <X size={11} />
+                    </button>
+                    <p className="text-[11px] font-extrabold leading-tight pr-4">{slot.subjectName}</p>
+                    <p className="text-[10px] font-semibold mt-1 opacity-70">{slot.startTime} – {slot.endTime}</p>
+                    {slot.room && (
+                      <p className="text-[9px] font-bold mt-0.5 opacity-60 uppercase tracking-wide">{slot.room}</p>
+                    )}
+                    <p className="text-[9px] font-semibold mt-1 opacity-50 truncate">{slot.teacherName}</p>
+                  </div>
+                ))}
+
+                <button
+                  onClick={() => { setFormDay(day); setShowForm(true); }}
+                  className="rounded-xl border border-dashed border-border bg-bg hover:bg-white hover:border-primary/30 transition-all h-8 flex items-center justify-center text-text-muted hover:text-primary"
+                >
+                  <Plus size={13} />
+                </button>
+              </div>
+            ))}
+          </div>
+
+          {slots.length === 0 && (
+            <div className="rounded-2xl border border-border bg-white px-6 py-6 text-center mt-2">
+              <p className="text-xs font-semibold text-text-muted">
+                Aucun créneau pour {selectedClass.name}. Cliquez sur <strong>+</strong> dans une colonne ou sur "Nouveau créneau" en haut.
+              </p>
+            </div>
+          )}
+        </>
+      )}
     </div>
   );
 }

@@ -684,6 +684,35 @@ Réponds en JSON strict:
     };
   },
 
+  async listTimeSlots(classId?: string) {
+    return schoolRepository.listTimeSlots(classId ? { classId } : undefined);
+  },
+
+  async createTimeSlot(input: {
+    classId: string;
+    subjectId: string;
+    teacherId: string;
+    day: string;
+    startTime: string;
+    endTime: string;
+    room?: string;
+  }) {
+    try {
+      return await schoolRepository.createTimeSlot(input);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Création impossible.";
+      throw new AdminError(message, 409);
+    }
+  },
+
+  async deleteTimeSlot(slotId: string) {
+    try {
+      return await schoolRepository.deleteTimeSlot(slotId);
+    } catch {
+      throw new AdminError("Créneau introuvable.", 404);
+    }
+  },
+
   async createAssignment(input: { teacherId: string; classId: string; subjectId: string }) {
     try {
       return await schoolRepository.createAssignment(input);

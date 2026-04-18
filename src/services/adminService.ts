@@ -76,6 +76,97 @@ export interface AdminOverview {
   recentInvitations: AdminInvitationRecord[];
 }
 
+export interface AdminRecommendationStats {
+  totals: {
+    total: number;
+    studentRecommendations: number;
+    classRecommendations: number;
+    whatsappSent: number;
+    followThroughRate: number;
+  };
+  byRiskLevel: {
+    critical: number;
+    high: number;
+    medium: number;
+    low: number;
+  };
+  timeline: Array<{
+    date: string;
+    total: number;
+    whatsappSent: number;
+  }>;
+  topClasses: Array<{
+    classId: string;
+    className: string;
+    recommendationsCount: number;
+    averageRiskScore: number;
+  }>;
+}
+
+export interface AdminClassReport {
+  classId: string;
+  className: string;
+  generatedAt: string;
+  riskLevel: string;
+  summary: string;
+  classSignals: {
+    classAverage: number | null;
+    attendanceSessions: number;
+    totalAbsences: number;
+    totalLate: number;
+    absenceRate: number;
+    lateRate: number;
+    studentsCount: number;
+    studentsAtRisk: number;
+    riskScore: number;
+    riskLevel: string;
+  };
+  studentsAtRisk: Array<{
+    studentId: string;
+    studentName: string;
+    averageGrade: number | null;
+    absenceRate: number;
+    lateCount: number;
+    gradeEvolution: number;
+    subjectsAtRisk: string[];
+    riskScore: number;
+    riskLevel: string;
+  }>;
+  recommendations: string[];
+}
+
+export type WeekDay = 'Lundi' | 'Mardi' | 'Mercredi' | 'Jeudi' | 'Vendredi' | 'Samedi';
+
+export interface AdminTimeSlotRecord {
+  id: string;
+  classId: string;
+  className: string;
+  subjectId: string;
+  subjectName: string;
+  teacherId: string;
+  teacherName: string;
+  day: WeekDay;
+  startTime: string;
+  endTime: string;
+  room: string | null;
+}
+
+export interface AdminParentStudentLinkRecord {
+  id: string;
+  parentUserId: string;
+  parentName: string;
+  parentPhone?: string;
+  studentId: string;
+  studentName: string;
+  relationship: 'MOTHER' | 'FATHER' | 'TUTOR';
+  relationshipLabel: string;
+  isPrimary: boolean;
+  welcomeDelivery?: {
+    delivered: boolean;
+    reason?: string;
+  } | null;
+}
+
 const request = async <T>(path: string, session: AuthSession, init?: RequestInit): Promise<T> => {
   const response = await fetch(`${API_BASE_URL}${path}`, {
     ...init,
@@ -137,9 +228,64 @@ export const adminService = {
     } satisfies AdminOverview;
   },
 
+  async fetchRecommendationStats(session: AuthSession): Promise<AdminRecommendationStats> {
+    const response = await request<{ data: AdminRecommendationStats }>(
+      '/api/admin/recommendations/stats',
+      session,
+    );
+    return response.data;
+  },
+
+  async generateClassReport(session: AuthSession, classId: string): Promise<AdminClassReport> {
+    const response = await request<{ data: AdminClassReport }>(
+      `/api/admin/ai/class-report/${classId}`,
+      session,
+      {
+        method: 'POST',
+      },
+    );
+    return response.data;
+  },
+
   async fetchUsers(session: AuthSession) {
     const response = await request<{ data: Array<any> }>('/api/admin/users', session);
     return response.data.map(toAdminUser);
+  },
+
+  async fetchParentStudentLinks(session: AuthSession): Promise<AdminParentStudentLinkRecord[]> {
+    const response = await request<{ data: AdminParentStudentLinkRecord[] }>(
+      '/api/admin/parent-student-links',
+      session,
+    );
+    return response.data;
+  },
+
+  async createParentStudentLink(
+    session: AuthSession,
+    input: {
+      parentUserId: string;
+      studentId: string;
+      relationship: 'MOTHER' | 'FATHER' | 'TUTOR';
+      isPrimary?: boolean;
+    },
+  ): Promise<AdminParentStudentLinkRecord> {
+    const response = await request<{ data: AdminParentStudentLinkRecord }>(
+      '/api/admin/parent-student-links',
+      session,
+      {
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+    );
+    return response.data;
+  },
+
+  async deleteParentStudentLink(session: AuthSession, linkId: string): Promise<void> {
+    await request<{ data: { id: string } }>(
+      `/api/admin/parent-student-links/${linkId}`,
+      session,
+      { method: 'DELETE' },
+    );
   },
 
   async fetchInvitations(session: AuthSession) {
@@ -163,6 +309,24 @@ export const adminService = {
     return {
       user: toAdminUser(response.data.user),
       invitation: toInvitation(response.data.invitation),
+    };
+  },
+
+  async registerParent(
+    session: AuthSession,
+    input: { schoolId: string; firstName: string; lastName: string; phone: string; email?: string },
+  ) {
+    const response = await request<{ data: { user: any } }>(
+      '/api/admin/parents',
+      session,
+      {
+        method: 'POST',
+        body: JSON.stringify(input),
+      },
+    );
+
+    return {
+      user: toAdminUser(response.data.user),
     };
   },
 
@@ -271,5 +435,35 @@ export const adminService = {
       session,
       { method: 'DELETE' },
     );
+  },
+
+  async fetchTimeSlots(session: AuthSession, classId?: string): Promise<AdminTimeSlotRecord[]> {
+    const url = classId ? `/api/admin/schedule?classId=${encodeURIComponent(classId)}` : '/api/admin/schedule';
+    const response = await request<{ data: AdminTimeSlotRecord[] }>(url, session);
+    return response.data;
+  },
+
+  async createTimeSlot(
+    session: AuthSession,
+    input: {
+      classId: string;
+      subjectId: string;
+      teacherId: string;
+      day: WeekDay;
+      startTime: string;
+      endTime: string;
+      room?: string;
+    },
+  ): Promise<AdminTimeSlotRecord> {
+    const response = await request<{ data: AdminTimeSlotRecord }>(
+      '/api/admin/schedule',
+      session,
+      { method: 'POST', body: JSON.stringify(input) },
+    );
+    return response.data;
+  },
+
+  async deleteTimeSlot(session: AuthSession, slotId: string): Promise<void> {
+    await request<{ data: { id: string } }>(`/api/admin/schedule/${slotId}`, session, { method: 'DELETE' });
   },
 };

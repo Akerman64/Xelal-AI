@@ -113,6 +113,20 @@ export interface DevMessage {
   content: string;
   senderRole: 'TEACHER' | 'PARENT';
   createdAt: string;
+  teacherReadAt?: string;
+}
+
+export type WeekDay = 'Lundi' | 'Mardi' | 'Mercredi' | 'Jeudi' | 'Vendredi' | 'Samedi';
+
+export interface DevTimeSlot {
+  id: string;
+  classId: string;
+  subjectId: string;
+  teacherId: string;
+  day: WeekDay;
+  startTime: string; // "08:00"
+  endTime: string;   // "10:00"
+  room?: string;
 }
 
 const createCode = () => String(randomInt(100000, 999999));
@@ -365,6 +379,15 @@ const messages: DevMessage[] = [
   },
 ];
 
+const timeSlots: DevTimeSlot[] = [
+  { id: "ts_1", classId: "class_term_s1", subjectId: "subject_math", teacherId: "teacher_1", day: "Lundi",    startTime: "08:00", endTime: "10:00", room: "Salle A1" },
+  { id: "ts_2", classId: "class_term_s1", subjectId: "subject_fr",   teacherId: "teacher_1", day: "Lundi",    startTime: "10:30", endTime: "12:30", room: "Salle A1" },
+  { id: "ts_3", classId: "class_term_s1", subjectId: "subject_pc",   teacherId: "teacher_1", day: "Mardi",    startTime: "08:00", endTime: "10:00", room: "Salle B2" },
+  { id: "ts_4", classId: "class_term_s1", subjectId: "subject_math", teacherId: "teacher_1", day: "Mercredi", startTime: "14:00", endTime: "16:00", room: "Salle A3" },
+  { id: "ts_5", classId: "class_term_s1", subjectId: "subject_pc",   teacherId: "teacher_1", day: "Jeudi",    startTime: "08:30", endTime: "10:30", room: "Salle B2" },
+  { id: "ts_6", classId: "class_term_s1", subjectId: "subject_fr",   teacherId: "teacher_1", day: "Vendredi", startTime: "11:00", endTime: "13:00", room: "Salle C1" },
+];
+
 export const devStore = {
   schools,
   users,
@@ -378,6 +401,7 @@ export const devStore = {
   attendanceSessions,
   attendanceRecords,
   messages,
+  timeSlots,
 };
 
 export const publicUser = (user: DevUser) => ({

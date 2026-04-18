@@ -29,6 +29,31 @@ adminRouter.get("/overview", (_req, res) => {
     });
 });
 
+adminRouter.get("/recommendations/stats", (_req, res) => {
+  Promise.resolve()
+    .then(async () => {
+      return res.status(200).json({ data: await adminService.getRecommendationsStats() });
+    })
+    .catch((error) => {
+      const message = error instanceof Error ? error.message : "Lecture impossible.";
+      return res.status(400).json({ error: message });
+    });
+});
+
+adminRouter.post("/ai/class-report/:classId", (req, res) => {
+  Promise.resolve()
+    .then(async () => {
+      return res.status(200).json({
+        data: await adminService.generateClassReport(req.params.classId),
+      });
+    })
+    .catch((error) => {
+      const statusCode = error instanceof AdminError ? error.statusCode : 400;
+      const message = error instanceof Error ? error.message : "Rapport IA impossible.";
+      return res.status(statusCode).json({ error: message });
+    });
+});
+
 adminRouter.get("/invitations", (_req, res) => {
   Promise.resolve()
     .then(async () => {
@@ -101,6 +126,34 @@ adminRouter.post("/users/invite", (req, res) => {
     const statusCode = error instanceof AdminError ? error.statusCode : 400;
     const message = error instanceof Error ? error.message : "Invitation impossible.";
     return res.status(statusCode).json({ error: message });
+    });
+});
+
+adminRouter.post("/parents", (req, res) => {
+  Promise.resolve()
+    .then(async () => {
+      const { schoolId, firstName, lastName, email, phone } = req.body ?? {};
+
+      if (!schoolId || !firstName || !lastName || !phone) {
+        return res.status(400).json({
+          error: "schoolId, firstName, lastName et phone sont obligatoires.",
+        });
+      }
+
+      return res.status(201).json({
+        data: await adminService.registerParent({
+          schoolId,
+          firstName,
+          lastName,
+          email,
+          phone,
+        }),
+      });
+    })
+    .catch((error) => {
+      const statusCode = error instanceof AdminError ? error.statusCode : 400;
+      const message = error instanceof Error ? error.message : "Création impossible.";
+      return res.status(statusCode).json({ error: message });
     });
 });
 
@@ -214,6 +267,103 @@ adminRouter.get("/assignments", (_req, res) => {
     .catch((error) => {
       const message = error instanceof Error ? error.message : "Lecture impossible.";
       return res.status(400).json({ error: message });
+    });
+});
+
+adminRouter.get("/parent-student-links", (_req, res) => {
+  Promise.resolve()
+    .then(async () => {
+      return res.status(200).json({ data: await adminService.listParentStudentLinks() });
+    })
+    .catch((error) => {
+      const message = error instanceof Error ? error.message : "Lecture impossible.";
+      return res.status(400).json({ error: message });
+    });
+});
+
+adminRouter.post("/parent-student-links", (req, res) => {
+  Promise.resolve()
+    .then(async () => {
+      const { parentUserId, studentId, relationship, isPrimary } = req.body ?? {};
+      if (!parentUserId || !studentId || !relationship) {
+        return res.status(400).json({
+          error: "parentUserId, studentId et relationship sont obligatoires.",
+        });
+      }
+
+      return res.status(201).json({
+        data: await adminService.createParentStudentLink({
+          parentUserId,
+          studentId,
+          relationship,
+          isPrimary: Boolean(isPrimary),
+        }),
+      });
+    })
+    .catch((error) => {
+      const statusCode = error instanceof AdminError ? error.statusCode : 400;
+      const message = error instanceof Error ? error.message : "Création impossible.";
+      return res.status(statusCode).json({ error: message });
+    });
+});
+
+adminRouter.delete("/parent-student-links/:linkId", (req, res) => {
+  Promise.resolve()
+    .then(async () => {
+      return res.status(200).json({
+        data: await adminService.deleteParentStudentLink(req.params.linkId),
+      });
+    })
+    .catch((error) => {
+      const statusCode = error instanceof AdminError ? error.statusCode : 400;
+      const message = error instanceof Error ? error.message : "Suppression impossible.";
+      return res.status(statusCode).json({ error: message });
+    });
+});
+
+// ─── Emploi du temps ───────────────────────────────────────────────────────
+
+adminRouter.get("/schedule", (req, res) => {
+  Promise.resolve()
+    .then(async () => {
+      const classId = typeof req.query.classId === "string" ? req.query.classId : undefined;
+      return res.status(200).json({ data: await adminService.listTimeSlots(classId) });
+    })
+    .catch((error) => {
+      const message = error instanceof Error ? error.message : "Lecture impossible.";
+      return res.status(400).json({ error: message });
+    });
+});
+
+adminRouter.post("/schedule", (req, res) => {
+  Promise.resolve()
+    .then(async () => {
+      const { classId, subjectId, teacherId, day, startTime, endTime, room } = req.body ?? {};
+      if (!classId || !subjectId || !teacherId || !day || !startTime || !endTime) {
+        return res.status(400).json({
+          error: "classId, subjectId, teacherId, day, startTime et endTime sont obligatoires.",
+        });
+      }
+      return res.status(201).json({
+        data: await adminService.createTimeSlot({ classId, subjectId, teacherId, day, startTime, endTime, room }),
+      });
+    })
+    .catch((error) => {
+      const statusCode = error instanceof AdminError ? error.statusCode : 400;
+      const message = error instanceof Error ? error.message : "Création impossible.";
+      return res.status(statusCode).json({ error: message });
+    });
+});
+
+adminRouter.delete("/schedule/:slotId", (req, res) => {
+  Promise.resolve()
+    .then(async () => {
+      return res.status(200).json({ data: await adminService.deleteTimeSlot(req.params.slotId) });
+    })
+    .catch((error) => {
+      const statusCode = error instanceof AdminError ? error.statusCode : 400;
+      const message = error instanceof Error ? error.message : "Suppression impossible.";
+      return res.status(statusCode).json({ error: message });
     });
 });
 
