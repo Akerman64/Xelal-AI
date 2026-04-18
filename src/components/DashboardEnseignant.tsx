@@ -21,14 +21,15 @@ import {
   Clock,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
-import { MOCK_STUDENTS, MOCK_TEACHER, MOCK_CLASSES } from '../constants';
 import { messageService, type MessageContact, type MessageThread } from '../services/messageService';
-import { Attendance, AuthSession, Student } from '../types';
+import { Attendance, AuthSession, Class, Student } from '../types';
 import { analyzeClassPerformance, analyzeStudentPerformance } from '../services/geminiService';
 import {
   fetchTeacherDashboardData,
   fetchTeacherClassRecommendations,
+  fetchTeacherClassRiskSignals,
   fetchTeacherRecommendations,
+  fetchTeacherStudentRiskSignals,
   fetchTeacherWorkspaceData,
   saveTeacherAttendance,
   saveTeacherClassRecommendation,
@@ -60,19 +61,19 @@ interface DashboardEnseignantProps {
 
 export default function DashboardEnseignant({ session }: DashboardEnseignantProps) {
   const [selectedTab, setSelectedTab] = useState('dashboard');
-  const [selectedClass, setSelectedClass] = useState(MOCK_CLASSES[0]?.name || 'Terminale S1');
+  const [selectedClass, setSelectedClass] = useState('');
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
   const [aiAnalysis, setAiAnalysis] = useState<any>(null);
   const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [teacherName, setTeacherName] = useState(MOCK_TEACHER.name);
-  const [teacherId, setTeacherId] = useState('teacher_1');
-  const [selectedClassId, setSelectedClassId] = useState(MOCK_CLASSES[0]?.id || 'c1');
-  const [classesData, setClassesData] = useState(MOCK_CLASSES);
-  const [studentsData, setStudentsData] = useState(MOCK_STUDENTS);
-  const [assessmentTitles, setAssessmentTitles] = useState<string[]>(['Interrogation 1', 'Devoir 1']);
+  const [teacherName, setTeacherName] = useState('');
+  const [teacherId, setTeacherId] = useState('');
+  const [selectedClassId, setSelectedClassId] = useState('');
+  const [classesData, setClassesData] = useState<Class[]>([]);
+  const [studentsData, setStudentsData] = useState<Student[]>([]);
+  const [assessmentTitles, setAssessmentTitles] = useState<string[]>([]);
   const [assessmentsByClass, setAssessmentsByClass] = useState<Record<string, any[]>>({});
   const [isLoadingData, setIsLoadingData] = useState(true);
-  const [dataSourceLabel, setDataSourceLabel] = useState<'api' | 'mock'>('mock');
+  const [dataSourceLabel, setDataSourceLabel] = useState<'api' | 'mock'>('api');
   const [loadError, setLoadError] = useState<string | null>(null);
   const [saveMessage, setSaveMessage] = useState<string | null>(null);
   const [contextStudent, setContextStudent] = useState<Student | null>(null);
@@ -88,15 +89,16 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
   const [whatsAppDraft, setWhatsAppDraft] = useState('');
   const [isSendingWhatsApp, setIsSendingWhatsApp] = useState(false);
   const [selectedLesson, setSelectedLesson] = useState<TeacherLesson | null>(null);
-  const [selectedClassCardId, setSelectedClassCardId] = useState(MOCK_CLASSES[0]?.id || 'c1');
+  const [selectedClassCardId, setSelectedClassCardId] = useState('');
   const [classAiAnalysis, setClassAiAnalysis] = useState<any>(null);
   const [classRecommendationHistory, setClassRecommendationHistory] = useState<TeacherRecommendationRecord[]>([]);
   const [classRecommendationPrompt, setClassRecommendationPrompt] = useState('');
   const [isAnalyzingClass, setIsAnalyzingClass] = useState(false);
-  const [gradebookClassId, setGradebookClassId] = useState(MOCK_CLASSES[0]?.id || 'c1');
+  const [gradebookClassId, setGradebookClassId] = useState('');
   const [selectedSubjectFilter, setSelectedSubjectFilter] = useState('all');
   const [selectedPeriodFilter, setSelectedPeriodFilter] = useState('all');
-  const [attendanceClassId, setAttendanceClassId] = useState(MOCK_CLASSES[0]?.id || 'c1');
+  const [attendanceClassId, setAttendanceClassId] = useState('');
+  const [activeRecommendationId, setActiveRecommendationId] = useState<string | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -146,37 +148,21 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
           return;
         }
 
-        setTeacherName(MOCK_TEACHER.name);
-        setTeacherId('teacher_1');
-        setSelectedClassId(MOCK_CLASSES[0]?.id || 'c1');
-        setSelectedClassCardId(MOCK_CLASSES[0]?.id || 'c1');
-        setGradebookClassId(MOCK_CLASSES[0]?.id || 'c1');
-        setAttendanceClassId(MOCK_CLASSES[0]?.id || 'c1');
-        setClassesData(MOCK_CLASSES);
-        setStudentsData(MOCK_STUDENTS);
-        setAssessmentsByClass({
-          c1: [
-            { id: 'g1a', title: 'Interrogation 1', subject: 'Mathématiques', date: '2026-04-10' },
-            { id: 'g1b', title: 'Devoir 1', subject: 'Français', date: '2026-04-12' },
-          ],
-        });
-        setAssessmentTitles(['Interrogation 1', 'Devoir 1']);
-        setWorkspace({
-          upcomingLessons: [
-            { id: 'mock-1', classId: 'c1', className: 'Terminale S1', subjectId: 'math', subjectName: 'Mathématiques', day: 'Lundi', startTime: '08:00', endTime: '10:00', room: 'Salle A1' },
-            { id: 'mock-2', classId: 'c1', className: 'Terminale S1', subjectId: 'pc', subjectName: 'Physique-Chimie', day: 'Lundi', startTime: '10:30', endTime: '12:30', room: 'Salle B2' },
-          ],
-          weeklySchedule: [
-            { id: 'mock-1', classId: 'c1', className: 'Terminale S1', subjectId: 'math', subjectName: 'Mathématiques', day: 'Lundi', startTime: '08:00', endTime: '10:00', room: 'Salle A1' },
-            { id: 'mock-2', classId: 'c1', className: 'Terminale S1', subjectId: 'pc', subjectName: 'Physique-Chimie', day: 'Lundi', startTime: '10:30', endTime: '12:30', room: 'Salle B2' },
-            { id: 'mock-3', classId: 'c1', className: 'Terminale S1', subjectId: 'fr', subjectName: 'Français', day: 'Mercredi', startTime: '14:00', endTime: '16:00', room: 'Salle C1' },
-          ],
-          quickContacts: [
-            { parentName: 'Fatou Diop', studentName: 'Moussa Diop', phone: '+33748407869', lastMessage: 'Suivi de progression demandé.' },
-          ],
-        });
-        setDataSourceLabel('mock');
-        setLoadError("Backend indisponible, affichage des donnees de demonstration.");
+        if (session) {
+          setTeacherName(`${session.user.firstName} ${session.user.lastName}`.trim());
+          setTeacherId(session.user.id);
+        }
+        setClassesData([]);
+        setStudentsData([]);
+        setAssessmentsByClass({});
+        setAssessmentTitles([]);
+        setWorkspace({ upcomingLessons: [], weeklySchedule: [], quickContacts: [] });
+        setDataSourceLabel('api');
+        setLoadError(
+          error instanceof Error && error.message
+            ? error.message
+            : 'Impossible de charger les données. Vérifiez que le backend est démarré.',
+        );
       } finally {
         if (isMounted) {
           setIsLoadingData(false);
@@ -336,7 +322,13 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
     setAiAnalysis(null);
     setIsAnalyzing(true);
     try {
-      const analysis = await analyzeStudentPerformance(student, recommendationPrompt.trim() || undefined);
+      const riskSignals =
+        dataSourceLabel === 'api' ? await fetchTeacherStudentRiskSignals(student.id).catch(() => null) : null;
+      const analysis = await analyzeStudentPerformance(
+        student,
+        recommendationPrompt.trim() || undefined,
+        riskSignals,
+      );
       setAiAnalysis(analysis);
 
       if (dataSourceLabel === 'api') {
@@ -345,6 +337,7 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
           riskLevel: analysis.riskLevel,
           recommendations: analysis.recommendations || [],
           explanation: analysis.explanation,
+          whatsappMessage: analysis.whatsappMessage,
           prompt: recommendationPrompt.trim() || undefined,
         });
         const history = await fetchTeacherRecommendations(student.id);
@@ -358,6 +351,9 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
             riskLevel: analysis.riskLevel,
             recommendations: analysis.recommendations || [],
             explanation: analysis.explanation,
+            whatsappMessage: analysis.whatsappMessage,
+            whatsappSent: false,
+            whatsappSentAt: '',
             prompt: recommendationPrompt.trim() || '',
             createdAt: new Date().toISOString(),
           },
@@ -374,6 +370,7 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
     setSelectedStudent(student);
     setContextStudent(student);
     setWhatsAppTargetStudent(student);
+    setActiveRecommendationId(null);
     if (dataSourceLabel === 'api') {
       try {
         const history = await fetchTeacherRecommendations(student.id);
@@ -412,6 +409,9 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
         selectedClassCard.name,
         selectedClassStudents,
         classRecommendationPrompt.trim() || undefined,
+        dataSourceLabel === 'api'
+          ? await fetchTeacherClassRiskSignals(selectedClassCard.id).catch(() => null)
+          : null,
       );
       setClassAiAnalysis(analysis);
 
@@ -455,12 +455,21 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
     setIsSendingWhatsApp(true);
     try {
       if (dataSourceLabel === 'api') {
-        const result = await sendTeacherWhatsAppMessage(whatsAppTargetStudent.id, whatsAppDraft.trim());
+        const result = await sendTeacherWhatsAppMessage(
+          whatsAppTargetStudent.id,
+          whatsAppDraft.trim(),
+          activeRecommendationId || undefined,
+        );
         setSaveMessage(result.sent > 0 ? 'Message WhatsApp envoyé au parent.' : "Message préparé mais non délivré.");
+        if (activeRecommendationId && selectedStudent) {
+          const history = await fetchTeacherRecommendations(selectedStudent.id);
+          setRecommendationHistory(history);
+        }
       } else {
         setSaveMessage('Message WhatsApp simulé en mode démo.');
       }
       setWhatsAppDraft('');
+      setActiveRecommendationId(null);
     } catch {
       setSaveMessage("Impossible d'envoyer le message WhatsApp.");
     } finally {
@@ -637,6 +646,15 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
           {loadError && (
             <div className="mb-6 rounded-2xl border border-warning/20 bg-warning/5 px-4 py-3 text-xs font-semibold text-text-main">
               {loadError}
+            </div>
+          )}
+          {!isLoadingData && !loadError && classesData.length === 0 && (
+            <div className="mb-6 rounded-2xl border border-border bg-white px-6 py-8 text-center">
+              <BookOpen className="mx-auto mb-3 text-text-muted" size={32} strokeWidth={1.5} />
+              <p className="text-sm font-semibold text-text-main">Aucune classe affectée</p>
+              <p className="mt-1 text-xs text-text-muted">
+                L'administrateur doit vous affecter à des classes et des matières pour que votre tableau de bord s'active.
+              </p>
             </div>
           )}
           {saveMessage && (
@@ -832,6 +850,23 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
                           ))}
                         </ul>
                       </div>
+                      {!!aiAnalysis.whatsappMessage && (
+                        <div className="mt-4 rounded-2xl border border-[#c5d9d1] bg-white p-4">
+                          <p className="text-[10px] font-bold uppercase tracking-widest text-[#075e54]">Message WhatsApp suggéré</p>
+                          <p className="mt-2 text-xs font-medium text-text-main">{aiAnalysis.whatsappMessage}</p>
+                          <button
+                            onClick={() => {
+                              setWhatsAppTargetStudent(selectedStudent);
+                              setWhatsAppDraft(aiAnalysis.whatsappMessage);
+                              setActiveRecommendationId(recommendationHistory[0]?.id ?? null);
+                              setSelectedTab('dashboard');
+                            }}
+                            className="mt-3 rounded-xl bg-[#075e54] px-4 py-3 text-xs font-bold text-white"
+                          >
+                            Utiliser ce message
+                          </button>
+                        </div>
+                      )}
                     </div>
                   ) : (
                     <div className="h-44 bg-bg border border-border rounded-3xl flex items-center justify-center flex-col gap-4 p-8 text-center">
@@ -894,6 +929,30 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
                         </div>
                         <p className="mt-2 text-sm font-semibold text-text-main">{item.summary}</p>
                         {!!item.prompt && <p className="mt-2 text-[11px] text-text-muted">Demande: {item.prompt}</p>}
+                        {!!item.whatsappMessage && (
+                          <div className="mt-3 rounded-2xl border border-[#c5d9d1] bg-white p-3">
+                            <p className="text-[10px] font-bold uppercase tracking-widest text-[#075e54]">
+                              WhatsApp {item.whatsappSent ? 'envoyé' : 'suggéré'}
+                            </p>
+                            <p className="mt-2 text-xs text-text-main">{item.whatsappMessage}</p>
+                            <div className="mt-3 flex items-center justify-between gap-3">
+                              <span className="text-[10px] font-bold uppercase tracking-wider text-text-muted">
+                                {item.whatsappSent ? `Envoyé ${item.whatsappSentAt ? new Intl.DateTimeFormat('fr-FR', { dateStyle: 'medium', timeStyle: 'short' }).format(new Date(item.whatsappSentAt)) : ''}` : 'Non envoyé'}
+                              </span>
+                              <button
+                                onClick={() => {
+                                  setWhatsAppTargetStudent(selectedStudent);
+                                  setWhatsAppDraft(item.whatsappMessage || '');
+                                  setActiveRecommendationId(item.id);
+                                  setSelectedTab('dashboard');
+                                }}
+                                className="rounded-xl bg-[#075e54] px-3 py-2 text-[11px] font-bold text-white"
+                              >
+                                Préremplir
+                              </button>
+                            </div>
+                          </div>
+                        )}
                       </div>
                     )) : (
                       <div className="rounded-2xl border border-dashed border-border bg-bg/30 p-4 text-xs font-medium text-text-muted">
@@ -1880,7 +1939,16 @@ function MessagesView({ session }: { session?: AuthSession }) {
     if (!session || !activeStudentId) return;
     setIsLoadingThread(true);
     messageService.fetchThread(session, activeStudentId)
-      .then((data) => { setThread(data); setError(null); })
+      .then(async (data) => {
+        setThread(data);
+        setError(null);
+        await messageService.markThreadAsRead(session, activeStudentId).catch(() => null);
+        setContacts((prev) =>
+          prev.map((contact) =>
+            contact.studentId === activeStudentId ? { ...contact, unreadCount: 0 } : contact,
+          ),
+        );
+      })
       .catch((e) => setError(e instanceof Error ? e.message : 'Erreur'))
       .finally(() => setIsLoadingThread(false));
   }, [session, activeStudentId]);
@@ -1949,6 +2017,11 @@ function MessagesView({ session }: { session?: AuthSession }) {
               <p className="text-[11px] text-text-muted truncate font-medium">
                 {contact.lastSenderRole === 'TEACHER' ? 'Vous : ' : ''}{contact.lastMessage ?? '—'}
               </p>
+              {contact.unreadCount > 0 && (
+                <div className="mt-2 inline-flex items-center rounded-full bg-primary px-2 py-1 text-[9px] font-bold uppercase tracking-wider text-white">
+                  {contact.unreadCount} non lu{contact.unreadCount > 1 ? 's' : ''}
+                </div>
+              )}
             </button>
           ))}
         </div>

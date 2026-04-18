@@ -7,6 +7,20 @@ export const teacherRouter = Router();
 
 teacherRouter.use(requireAuth, requireRole("TEACHER", "ADMIN"));
 
+teacherRouter.get("/classes", (req: AuthenticatedRequest, res) => {
+  Promise.resolve()
+    .then(async () => {
+      const teacherId = req.currentUser?.id;
+      if (!teacherId) return res.status(401).json({ error: "Session invalide." });
+      return res.status(200).json({ data: await teacherService.getTeacherClasses(teacherId) });
+    })
+    .catch((error) => {
+      const statusCode = error instanceof TeacherError ? error.statusCode : 400;
+      const message = error instanceof Error ? error.message : "Lecture impossible.";
+      return res.status(statusCode).json({ error: message });
+    });
+});
+
 teacherRouter.get("/dashboard", (req: AuthenticatedRequest, res) => {
   Promise.resolve()
     .then(async () => {
@@ -17,6 +31,34 @@ teacherRouter.get("/dashboard", (req: AuthenticatedRequest, res) => {
 
       return res.status(200).json({
         data: await teacherService.getDashboard(teacherId),
+      });
+    })
+    .catch((error) => {
+      const statusCode = error instanceof TeacherError ? error.statusCode : 400;
+      const message = error instanceof Error ? error.message : "Lecture impossible.";
+      return res.status(statusCode).json({ error: message });
+    });
+});
+
+teacherRouter.get("/students/:studentId/risk-signals", (req, res) => {
+  Promise.resolve()
+    .then(async () => {
+      return res.status(200).json({
+        data: await teacherService.getStudentRiskSignals(req.params.studentId),
+      });
+    })
+    .catch((error) => {
+      const statusCode = error instanceof TeacherError ? error.statusCode : 400;
+      const message = error instanceof Error ? error.message : "Lecture impossible.";
+      return res.status(statusCode).json({ error: message });
+    });
+});
+
+teacherRouter.get("/classes/:classId/risk-signals", (req, res) => {
+  Promise.resolve()
+    .then(async () => {
+      return res.status(200).json({
+        data: await teacherService.getClassRiskSignals(req.params.classId),
       });
     })
     .catch((error) => {
@@ -83,6 +125,8 @@ teacherRouter.post("/students/:studentId/whatsapp-message", (req: AuthenticatedR
       }
 
       const message = typeof req.body?.message === "string" ? req.body.message : "";
+      const recommendationId =
+        typeof req.body?.recommendationId === "string" ? req.body.recommendationId : undefined;
       if (!message.trim()) {
         return res.status(400).json({ error: "Le message est obligatoire." });
       }
@@ -92,6 +136,7 @@ teacherRouter.post("/students/:studentId/whatsapp-message", (req: AuthenticatedR
           studentId: req.params.studentId,
           teacherId,
           message: message.trim(),
+          recommendationId,
         }),
       });
     })
@@ -192,6 +237,22 @@ teacherRouter.post("/messages/:studentId", (req: AuthenticatedRequest, res) => {
     .catch((error) => {
       const statusCode = error instanceof MessagesError ? error.statusCode : 400;
       const message = error instanceof Error ? error.message : "Envoi impossible.";
+      return res.status(statusCode).json({ error: message });
+    });
+});
+
+teacherRouter.post("/messages/:studentId/read", (req: AuthenticatedRequest, res) => {
+  Promise.resolve()
+    .then(async () => {
+      const teacherId = req.currentUser?.id;
+      if (!teacherId) return res.status(401).json({ error: "Session invalide." });
+      return res.status(200).json({
+        data: await messagesService.markThreadAsRead(teacherId, req.params.studentId),
+      });
+    })
+    .catch((error) => {
+      const statusCode = error instanceof MessagesError ? error.statusCode : 400;
+      const message = error instanceof Error ? error.message : "Mise à jour impossible.";
       return res.status(statusCode).json({ error: message });
     });
 });

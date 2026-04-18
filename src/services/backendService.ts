@@ -150,8 +150,40 @@ export interface TeacherRecommendationRecord {
   riskLevel: string;
   recommendations: string[];
   explanation?: string;
+  whatsappMessage?: string;
+  whatsappSent?: boolean;
+  whatsappSentAt?: string;
   prompt?: string;
   createdAt: string;
+}
+
+export interface TeacherStudentRiskSignals {
+  studentId: string;
+  classId?: string | null;
+  averageGrade: number | null;
+  classAverage: number | null;
+  totalSessions: number;
+  absenceRate: number;
+  absentCount: number;
+  lateCount: number;
+  gradeEvolution: number;
+  subjectsAtRisk: string[];
+  riskScore: number;
+  riskLevel: string;
+}
+
+export interface TeacherClassRiskSignals {
+  classId: string;
+  classAverage: number | null;
+  attendanceSessions: number;
+  totalAbsences: number;
+  totalLate: number;
+  absenceRate: number;
+  lateRate: number;
+  studentsCount: number;
+  studentsAtRisk: number;
+  riskScore: number;
+  riskLevel: string;
 }
 
 const toAttendanceStatus = (status: 'PRESENT' | 'ABSENT' | 'LATE'): Attendance['status'] => {
@@ -186,11 +218,22 @@ export const fetchTeacherDashboardData = async (
 ): Promise<TeacherDashboardData> => {
   const token = session.accessToken;
 
-  const classesResponse = await request<{ data: ApiClass[] }>('/api/classes', token);
+  const classesResponse = await request<{ data: ApiClass[] }>('/api/teacher/classes', token);
   const selectedClass = classesResponse.data[0];
 
   if (!selectedClass) {
-    throw new Error('Aucune classe disponible.');
+    // Pas encore de classes affectées — retour propre sans throw
+    return {
+      teacherId: session.user.id,
+      teacherName: `${session.user.firstName} ${session.user.lastName}`.trim(),
+      classes: [],
+      selectedClassId: '',
+      selectedClassName: '',
+      assessments: [],
+      assessmentsByClass: {},
+      students: [],
+      gradebook: [],
+    };
   }
 
   const classPayloads = await Promise.all(
@@ -326,6 +369,34 @@ export const fetchTeacherRecommendations = async (studentId: string) => {
   return response.data;
 };
 
+export const fetchTeacherStudentRiskSignals = async (studentId: string) => {
+  const session = authService.getStoredSession();
+  if (!session) {
+    throw new Error('Session introuvable.');
+  }
+
+  const response = await request<{ data: TeacherStudentRiskSignals }>(
+    `/api/teacher/students/${studentId}/risk-signals`,
+    session.accessToken,
+  );
+
+  return response.data;
+};
+
+export const fetchTeacherClassRiskSignals = async (classId: string) => {
+  const session = authService.getStoredSession();
+  if (!session) {
+    throw new Error('Session introuvable.');
+  }
+
+  const response = await request<{ data: TeacherClassRiskSignals }>(
+    `/api/teacher/classes/${classId}/risk-signals`,
+    session.accessToken,
+  );
+
+  return response.data;
+};
+
 export const saveTeacherRecommendation = async (
   studentId: string,
   input: {
@@ -333,6 +404,7 @@ export const saveTeacherRecommendation = async (
     riskLevel?: string;
     recommendations: string[];
     explanation?: string;
+    whatsappMessage?: string;
     prompt?: string;
   },
 ) => {
@@ -394,7 +466,11 @@ export const saveTeacherClassRecommendation = async (
   return response.data;
 };
 
-export const sendTeacherWhatsAppMessage = async (studentId: string, message: string) => {
+export const sendTeacherWhatsAppMessage = async (
+  studentId: string,
+  message: string,
+  recommendationId?: string,
+) => {
   const session = authService.getStoredSession();
   if (!session) {
     throw new Error('Session introuvable.');
@@ -405,7 +481,7 @@ export const sendTeacherWhatsAppMessage = async (studentId: string, message: str
     session.accessToken,
     {
       method: 'POST',
-      body: JSON.stringify({ message }),
+      body: JSON.stringify({ message, recommendationId }),
     },
   );
 

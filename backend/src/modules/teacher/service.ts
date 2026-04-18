@@ -3,6 +3,7 @@ import { getPrismaClient, isPrismaEnabled } from "../../lib/prisma";
 import { devStore } from "../core/dev-store";
 import { notificationsService } from "../notifications/service";
 import { schoolRepository } from "../core/school-repository";
+import { messagesService } from "./messages-service";
 
 const scheduleTemplate = [
   { day: "Lundi", startTime: "08:00", endTime: "10:00", room: "Salle A1" },
@@ -35,22 +36,156 @@ function buildLessonId(index: number, classId: string, subjectId: string) {
   return `lesson_${classId}_${subjectId}_${index}`;
 }
 
+function average(values: number[]) {
+  if (!values.length) return null;
+  return Number((values.reduce((sum, value) => sum + value, 0) / values.length).toFixed(2));
+}
+
+function resolveRiskLevel(score: number) {
+  if (score >= 75) return "critical";
+  if (score >= 55) return "high";
+  if (score >= 30) return "medium";
+  return "low";
+}
+
+async function resolveStudentClassId(studentId: string) {
+  if (!isPrismaEnabled()) {
+    return devStore.users.find((user) => user.id === studentId)?.classId ?? null;
+  }
+
+  const prisma = getPrismaClient();
+  const enrollment = await prisma!.studentEnrollment.findFirst({
+    where: {
+      studentId,
+      status: "ACTIVE",
+    },
+    orderBy: {
+      academicYearId: "desc",
+    },
+  });
+
+  return enrollment?.classId ?? null;
+}
+
+async function computeStudentRiskSignals(studentId: string) {
+  const [grades, attendance] = await Promise.all([
+    schoolRepository.getStudentGrades(studentId),
+    schoolRepository.getStudentAttendance(studentId),
+  ]);
+
+  if (!grades || !attendance) {
+    throw new TeacherError("Élève introuvable.", 404);
+  }
+
+  const classId = await resolveStudentClassId(studentId);
+  const classGradebook = classId ? await schoolRepository.getClassGradebook(classId) : null;
+  const classAverage = classGradebook
+    ? average(classGradebook.rows.map((row) => row.average).filter((value): value is number => value !== null))
+    : null;
+
+  const totalSessions =
+    attendance.summary.present + attendance.summary.absent + attendance.summary.late;
+  const absenceRate =
+    totalSessions > 0 ? Number(((attendance.summary.absent / totalSessions) * 100).toFixed(1)) : 0;
+
+  const orderedGrades = [...grades.grades].sort((left, right) =>
+    String(left.date ?? "").localeCompare(String(right.date ?? "")),
+  );
+  const earlyAvg = average(orderedGrades.slice(0, 3).map((item) => item.value));
+  const recentAvg = average(orderedGrades.slice(-3).map((item) => item.value));
+  const gradeEvolution =
+    earlyAvg !== null && recentAvg !== null ? Number((recentAvg - earlyAvg).toFixed(2)) : 0;
+
+  const subjectsAtRisk = grades.subjectSummaries
+    .filter((item): item is NonNullable<typeof item> => Boolean(item))
+    .filter((item) => (item.average ?? 0) < 10)
+    .map((item) => item.subject);
+
+  const score =
+    Math.min(absenceRate, 40) * 0.8 +
+    Math.max(0, 10 - (grades.summary.generalAverage ?? 10)) * 4 +
+    Math.max(0, -gradeEvolution) * 6 +
+    attendance.summary.late * 3 +
+    subjectsAtRisk.length * 5;
+
+  return {
+    studentId,
+    classId,
+    averageGrade: grades.summary.generalAverage,
+    classAverage,
+    totalSessions,
+    absenceRate,
+    absentCount: attendance.summary.absent,
+    lateCount: attendance.summary.late,
+    gradeEvolution,
+    subjectsAtRisk,
+    riskScore: Number(Math.min(score, 100).toFixed(1)),
+    riskLevel: resolveRiskLevel(score),
+  };
+}
+
+async function computeClassRiskSignals(classId: string) {
+  const [gradebook, attendance] = await Promise.all([
+    schoolRepository.getClassGradebook(classId),
+    schoolRepository.getClassAttendance(classId),
+  ]);
+
+  if (!gradebook || !attendance) {
+    throw new TeacherError("Classe introuvable.", 404);
+  }
+
+  const rows = gradebook.rows;
+  const classAverage = average(
+    rows.map((row) => row.average).filter((value): value is number => value !== null),
+  );
+
+  const attendanceSessions = attendance.sessions.length;
+  const totalAbsences = attendance.sessions.reduce((sum, session) => sum + session.summary.absent, 0);
+  const totalLate = attendance.sessions.reduce((sum, session) => sum + session.summary.late, 0);
+  const totalPresent = attendance.sessions.reduce((sum, session) => sum + session.summary.present, 0);
+  const totalEvents = totalAbsences + totalLate + totalPresent;
+  const absenceRate = totalEvents > 0 ? Number(((totalAbsences / totalEvents) * 100).toFixed(1)) : 0;
+  const lateRate = totalEvents > 0 ? Number(((totalLate / totalEvents) * 100).toFixed(1)) : 0;
+
+  const atRiskStudents = rows.filter((row) => row.average !== null && row.average < 10).length;
+
+  const score =
+    Math.min(absenceRate, 40) * 0.7 +
+    Math.min(lateRate, 30) * 0.6 +
+    Math.max(0, 10 - (classAverage ?? 10)) * 5 +
+    atRiskStudents * 6;
+
+  return {
+    classId,
+    classAverage,
+    attendanceSessions,
+    totalAbsences,
+    totalLate,
+    absenceRate,
+    lateRate,
+    studentsCount: rows.length,
+    studentsAtRisk: atRiskStudents,
+    riskScore: Number(Math.min(score, 100).toFixed(1)),
+    riskLevel: resolveRiskLevel(score),
+  };
+}
+
 async function buildTeacherSchedule(teacherId: string) {
   if (!isPrismaEnabled()) {
-    const classes = devStore.classes.filter((item) => item.teacherIds.includes(teacherId));
-    const lessons = classes.flatMap((classRecord, classIndex) =>
-      devStore.subjects.slice(0, 2).map((subject, subjectIndex) => {
-        const template = scheduleTemplate[(classIndex * 2 + subjectIndex) % scheduleTemplate.length];
-        return {
-          id: buildLessonId(classIndex * 10 + subjectIndex, classRecord.id, subject.id),
-          classId: classRecord.id,
-          className: classRecord.name,
-          subjectId: subject.id,
-          subjectName: subject.name,
-          ...template,
-        };
-      }),
-    );
+    const assignments = devStore.teacherAssignments.filter((a) => a.teacherId === teacherId);
+    const lessons = assignments.map((assignment, index) => {
+      const classRecord = devStore.classes.find((c) => c.id === assignment.classId);
+      const subject = devStore.subjects.find((s) => s.id === assignment.subjectId);
+      const template = scheduleTemplate[index % scheduleTemplate.length];
+      return {
+        id: buildLessonId(index, assignment.classId, assignment.subjectId),
+        classId: assignment.classId,
+        className: classRecord?.name ?? assignment.classId,
+        subjectId: assignment.subjectId,
+        subjectName: subject?.name ?? assignment.subjectId,
+        ...template,
+      };
+    });
 
     return {
       weeklySchedule: lessons,
@@ -175,6 +310,65 @@ export const teacherService = {
     };
   },
 
+  async getStudentRiskSignals(studentId: string) {
+    return computeStudentRiskSignals(studentId);
+  },
+
+  async getClassRiskSignals(classId: string) {
+    return computeClassRiskSignals(classId);
+  },
+
+  async getTeacherClasses(teacherId: string) {
+    if (!isPrismaEnabled()) {
+      const assignments = devStore.teacherAssignments.filter(
+        (a) => a.teacherId === teacherId,
+      );
+      const classIds = Array.from(new Set(assignments.map((a) => a.classId)));
+
+      return devStore.classes
+        .filter((c) => classIds.includes(c.id))
+        .map((c) => ({
+          id: c.id,
+          schoolId: c.schoolId,
+          academicYearId: c.academicYearId,
+          name: c.name,
+          level: c.level,
+          studentsCount: c.studentIds.length,
+          teachersCount: c.teacherIds.length,
+        }));
+    }
+
+    const prisma = getPrismaClient();
+    const assignments = await prisma!.teacherAssignment.findMany({
+      where: { teacherId },
+      include: {
+        class: {
+          include: {
+            enrollments: { where: { status: "ACTIVE" } },
+            assignments: true,
+          },
+        },
+      },
+    });
+
+    const uniqueClasses = new Map<string, object>();
+    for (const assignment of assignments) {
+      if (!uniqueClasses.has(assignment.classId)) {
+        uniqueClasses.set(assignment.classId, {
+          id: assignment.class.id,
+          schoolId: assignment.class.schoolId,
+          academicYearId: assignment.class.academicYearId,
+          name: assignment.class.name,
+          level: assignment.class.level,
+          studentsCount: assignment.class.enrollments.length,
+          teachersCount: new Set(assignment.class.assignments.map((a) => a.teacherId)).size,
+        });
+      }
+    }
+
+    return Array.from(uniqueClasses.values());
+  },
+
   async listStudentRecommendations(studentId: string) {
     if (!isPrismaEnabled()) {
       return [];
@@ -201,6 +395,9 @@ export const teacherService = {
         riskLevel: String(output.riskLevel ?? item.riskLevel ?? "MEDIUM").toLowerCase(),
         recommendations: Array.isArray(output.recommendations) ? output.recommendations : [],
         explanation: output.explanation ?? "",
+        whatsappMessage: output.whatsappMessage ?? "",
+        whatsappSent: Boolean(output.whatsappSent),
+        whatsappSentAt: output.whatsappSentAt ?? "",
         prompt: snapshot.prompt ?? "",
         createdAt: item.createdAt.toISOString(),
       };
@@ -215,6 +412,7 @@ export const teacherService = {
     recommendations: string[];
     explanation?: string;
     prompt?: string;
+    whatsappMessage?: string;
   }) {
     if (!isPrismaEnabled()) {
       return {
@@ -241,6 +439,9 @@ export const teacherService = {
           riskLevel: input.riskLevel ?? "medium",
           recommendations: input.recommendations,
           explanation: input.explanation ?? "",
+          whatsappMessage: input.whatsappMessage ?? "",
+          whatsappSent: false,
+          whatsappSentAt: null,
         },
       },
     });
@@ -253,6 +454,9 @@ export const teacherService = {
       riskLevel: (input.riskLevel ?? "medium").toLowerCase(),
       recommendations: input.recommendations,
       explanation: input.explanation ?? "",
+      whatsappMessage: input.whatsappMessage ?? "",
+      whatsappSent: false,
+      whatsappSentAt: "",
       prompt: input.prompt ?? "",
       createdAt: created.createdAt.toISOString(),
     };
@@ -262,6 +466,7 @@ export const teacherService = {
     studentId: string;
     teacherId: string;
     message: string;
+    recommendationId?: string;
   }) {
     const report = await schoolRepository.getStudentGrades(input.studentId);
     if (!report) {
@@ -273,10 +478,42 @@ export const teacherService = {
       input.message,
     ].join("\n\n");
 
-    return notificationsService.deliverCustomMessageToStudentParents(
+    const delivery = await notificationsService.deliverCustomMessageToStudentParents(
       input.studentId,
       fullMessage,
     );
+
+    if (delivery.sent > 0) {
+      try {
+        await messagesService.sendMessage(input.teacherId, input.studentId, input.message);
+      } catch {
+        // On ne bloque pas l'envoi WhatsApp si l'archivage du message échoue.
+      }
+    }
+
+    if (input.recommendationId && isPrismaEnabled()) {
+      const prisma = getPrismaClient();
+      const existing = await prisma!.aIAnalysis.findUnique({
+        where: { id: input.recommendationId },
+      });
+
+      if (existing) {
+        const output = (existing.output as any) ?? {};
+        await prisma!.aIAnalysis.update({
+          where: { id: input.recommendationId },
+          data: {
+            output: {
+              ...output,
+              whatsappMessage: input.message,
+              whatsappSent: delivery.sent > 0,
+              whatsappSentAt: delivery.sent > 0 ? new Date().toISOString() : null,
+            },
+          },
+        });
+      }
+    }
+
+    return delivery;
   },
 
   async listClassRecommendations(classId: string) {
@@ -302,6 +539,9 @@ export const teacherService = {
       riskLevel: String(item.riskLevel ?? "MEDIUM").toLowerCase(),
       recommendations: Array.isArray(item.recommendations) ? item.recommendations : [],
       explanation: item.explanation ?? "",
+      whatsappMessage: "",
+      whatsappSent: false,
+      whatsappSentAt: "",
       prompt: item.prompt ?? "",
       createdAt: item.createdAt.toISOString(),
     }));
@@ -352,6 +592,9 @@ export const teacherService = {
       riskLevel: String(created.riskLevel ?? "MEDIUM").toLowerCase(),
       recommendations: Array.isArray(created.recommendations) ? created.recommendations : [],
       explanation: created.explanation ?? "",
+      whatsappMessage: "",
+      whatsappSent: false,
+      whatsappSentAt: "",
       prompt: created.prompt ?? "",
       createdAt: created.createdAt.toISOString(),
     };
