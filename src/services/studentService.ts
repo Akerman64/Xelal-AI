@@ -2,11 +2,13 @@ import { AuthSession } from '../types';
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || 'http://localhost:4000';
 
-const request = async <T>(path: string, session: AuthSession): Promise<T> => {
+const request = async <T>(path: string, session: AuthSession, init?: RequestInit): Promise<T> => {
   const response = await fetch(`${API_BASE_URL}${path}`, {
+    ...init,
     headers: {
       'Content-Type': 'application/json',
       Authorization: `Bearer ${session.accessToken}`,
+      ...init?.headers,
     },
   });
   const payload = await response.json();
@@ -75,6 +77,12 @@ export interface StudentRecommendation {
   createdAt: string;
 }
 
+export interface StudentTutorAnswer {
+  answer: string;
+  source: 'ai' | 'fallback';
+  generatedAt: string;
+}
+
 export const studentService = {
   async fetchGrades(session: AuthSession, studentId: string): Promise<StudentGradesData> {
     const response = await request<{ data: { summary: StudentGradeSummary; subjectSummaries: StudentSubjectSummary[]; grades: StudentGradeEntry[] } }>(
@@ -96,6 +104,18 @@ export const studentService = {
     const response = await request<{ data: StudentRecommendation[] }>(
       `/api/academics/students/${studentId}/recommendations`,
       session,
+    );
+    return response.data;
+  },
+
+  async askTutor(session: AuthSession, studentId: string, question: string): Promise<StudentTutorAnswer> {
+    const response = await request<{ data: StudentTutorAnswer }>(
+      '/api/student/ai/ask',
+      session,
+      {
+        method: 'POST',
+        body: JSON.stringify({ studentId, question }),
+      },
     );
     return response.data;
   },

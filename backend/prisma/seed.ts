@@ -14,6 +14,9 @@ const prisma = new PrismaClient();
 async function main() {
   await prisma.attendanceRecord.deleteMany();
   await prisma.attendanceSession.deleteMany();
+  await prisma.message.deleteMany();
+  await prisma.aIAnalysis.deleteMany();
+  await prisma.teacherRecommendation.deleteMany();
   await prisma.grade.deleteMany();
   await prisma.assessment.deleteMany();
   await prisma.teacherAssignment.deleteMany();
@@ -342,6 +345,38 @@ async function main() {
         sessionId: "attendance_session_2",
         studentId: "student_2",
         status: AttendanceStatus.PRESENT,
+      },
+    ],
+  });
+
+  await prisma.message.createMany({
+    data: [
+      {
+        id: "message_1",
+        teacherId: "teacher_1",
+        parentUserId: "parent_1",
+        studentId: "student_1",
+        content: "Bonjour, je souhaite le détail des notes de cette semaine.",
+        senderRole: "PARENT",
+        createdAt: new Date("2026-04-17T08:10:00.000Z"),
+      },
+      {
+        id: "message_2",
+        teacherId: "teacher_1",
+        parentUserId: "parent_1",
+        studentId: "student_1",
+        content: "Bonjour Madame Diop, Moussa a reçu 14/20 puis 8/20 en mathématiques cette semaine.",
+        senderRole: "TEACHER",
+        createdAt: new Date("2026-04-17T08:30:00.000Z"),
+      },
+      {
+        id: "message_3",
+        teacherId: "teacher_1",
+        parentUserId: "parent_1",
+        studentId: "student_1",
+        content: "Merci, je vais revoir les exercices avec lui ce soir.",
+        senderRole: "PARENT",
+        createdAt: new Date("2026-04-17T08:45:00.000Z"),
       },
     ],
   });

@@ -3,6 +3,7 @@ import { env } from "../../config/env";
 import { getPrismaClient, isPrismaEnabled } from "../../lib/prisma";
 import { schoolRepository } from "../core/school-repository";
 import { devStore } from "../core/dev-store";
+import { messagesService } from "../teacher/messages-service";
 
 type WhatsAppPayload = {
   entry?: Array<{
@@ -87,6 +88,36 @@ const askStudentSelection = (context: ParentStudentContext) =>
 
 const getUnknownParentMessage = () =>
   "Votre numéro n'est pas encore rattaché à un parent dans Xelal AI. Merci de contacter l'administration de l'école.";
+
+const reservedKeywords = [
+  "bonjour",
+  "salut",
+  "hello",
+  "menu",
+  "aide",
+  "1",
+  "2",
+  "3",
+  "4",
+  "5",
+  "note",
+  "notes",
+  "moyenne",
+  "absence",
+  "absences",
+  "retard",
+  "retards",
+  "emploi",
+  "horaire",
+  "planning",
+  "conseil",
+  "ia",
+  "analyse",
+  "prof",
+  "professeur",
+  "enseignant",
+  "contact",
+];
 
 async function resolveParentContext(fromPhone: string): Promise<ParentStudentContext | null> {
   const raw = normalizePhone(fromPhone);
@@ -300,6 +331,54 @@ function buildTeacherContactMessage(student: ParentStudentContext["students"][nu
   ].join("\n");
 }
 
+function isPotentialJustification(text: string) {
+  if (text.length < 4) return false;
+  return !includesAny(text, reservedKeywords);
+}
+
+async function tryHandleAttendanceJustification(
+  fromPhone: string,
+  context: ParentStudentContext,
+  incomingText: string,
+  selectedStudent: ParentStudentContext["students"][number] | null,
+) {
+  const pending = await schoolRepository.findPendingAttendanceJustificationsByParentPhone(fromPhone);
+  if (!pending.length) {
+    return null;
+  }
+
+  if (!isPotentialJustification(incomingText)) {
+    return null;
+  }
+
+  const target = selectedStudent
+    ? pending.find((item) => item.studentId === selectedStudent.id)
+    : pending[0];
+
+  if (!target) {
+    return {
+      resolved: true,
+      parentId: context.parent.id,
+      reply: "J'ai bien reçu votre message, mais je n'ai pas trouvé d'absence ou de retard en attente pour cet élève.",
+      generatedAt: now(),
+    };
+  }
+
+  await schoolRepository.updateAttendanceReason(target.recordId, incomingText.trim());
+
+  return {
+    resolved: true,
+    parentId: context.parent.id,
+    studentId: target.studentId,
+    reply: [
+      `Merci ${context.parent.firstName}, le motif a bien été enregistré.`,
+      `${target.studentFirstName} ${target.studentLastName} • ${target.status === "ABSENT" ? "absence" : "retard"} du ${target.date}`,
+      `Motif: ${incomingText.trim()}`,
+    ].join("\n"),
+    generatedAt: now(),
+  };
+}
+
 export async function buildWhatsAppReply(fromPhone: string, incomingText: string) {
   const text = incomingText.trim().toLowerCase();
   const context = await resolveParentContext(fromPhone);
@@ -337,6 +416,17 @@ export async function buildWhatsAppReply(fromPhone: string, incomingText: string
   }
 
   const student = selectedStudent ?? context.students[0];
+
+  const justificationReply = await tryHandleAttendanceJustification(
+    fromPhone,
+    context,
+    incomingText,
+    student,
+  );
+
+  if (justificationReply) {
+    return justificationReply;
+  }
 
   if (includesAny(text, ["1", "note", "notes", "moyenne"])) {
     return {
@@ -488,8 +578,32 @@ export const whatsappService = {
         continue;
       }
 
+      console.log("[whatsapp] inbound", {
+        from: message.from,
+        text: message.text,
+      });
+
       const reply = await buildWhatsAppReply(message.from, message.text);
+
+      if ("parentId" in reply && "studentId" in reply && reply.parentId && reply.studentId && message.text.trim()) {
+        try {
+          await messagesService.createParentInboundMessage({
+            parentUserId: reply.parentId,
+            studentId: reply.studentId,
+            content: message.text,
+          });
+        } catch {
+          // Le webhook ne doit pas échouer si l'archivage du message échoue.
+        }
+      }
+
       const delivery = await sendWhatsAppText(message.from, reply.reply);
+
+      console.log("[whatsapp] outbound", {
+        to: message.from,
+        delivered: delivery.delivered,
+        reason: "reason" in delivery ? delivery.reason : undefined,
+      });
 
       results.push({
         from: message.from,

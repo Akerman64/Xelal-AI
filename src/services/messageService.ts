@@ -32,6 +32,7 @@ export interface MessageEntry {
   content: string;
   senderRole: 'TEACHER' | 'PARENT';
   createdAt: string;
+  teacherReadAt?: string;
 }
 
 export interface MessageThread {
@@ -56,6 +57,15 @@ export const messageService = {
       `/api/teacher/messages/${studentId}`,
       session,
       { method: 'POST', body: JSON.stringify({ content }) },
+    );
+    return response.data;
+  },
+
+  async markThreadAsRead(session: AuthSession, studentId: string): Promise<{ updated: number }> {
+    const response = await request<{ data: { updated: number } }>(
+      `/api/teacher/messages/${studentId}/read`,
+      session,
+      { method: 'POST' },
     );
     return response.data;
   },

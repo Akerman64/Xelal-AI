@@ -30,6 +30,7 @@ import {
   type StudentGradesData,
   type StudentAttendanceData,
   type StudentRecommendation,
+  type StudentTutorAnswer,
 } from '../services/studentService';
 
 interface DashboardEleveProps {
@@ -41,6 +42,9 @@ export default function DashboardEleve({ session }: DashboardEleveProps) {
   const [gradesData, setGradesData] = useState<StudentGradesData | null>(null);
   const [attendanceData, setAttendanceData] = useState<StudentAttendanceData | null>(null);
   const [recommendations, setRecommendations] = useState<StudentRecommendation[]>([]);
+  const [tutorMessages, setTutorMessages] = useState<Array<{ role: 'student' | 'assistant'; content: string; meta?: string }>>([]);
+  const [tutorQuestion, setTutorQuestion] = useState('');
+  const [isAskingTutor, setIsAskingTutor] = useState(false);
   const [isLoading, setIsLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
 
@@ -136,7 +140,36 @@ export default function DashboardEleve({ session }: DashboardEleveProps) {
             {selectedTab === 'agenda' && (
               <AgendaView attendanceData={attendanceData} isLoading={isLoading} />
             )}
-            {selectedTab === 'ia' && <IATutorView studentName={studentName} recommendations={recommendations} />}
+            {selectedTab === 'ia' && (
+              <IATutorView
+                session={session}
+                studentId={session?.user.id}
+                studentName={studentName}
+                recommendations={recommendations}
+                tutorMessages={tutorMessages}
+                tutorQuestion={tutorQuestion}
+                setTutorQuestion={setTutorQuestion}
+                isAskingTutor={isAskingTutor}
+                onAskTutor={async (question: string) => {
+                  if (!session?.user.id) return;
+                  setTutorMessages((prev) => [...prev, { role: 'student', content: question }]);
+                  setIsAskingTutor(true);
+                  try {
+                    const answer: StudentTutorAnswer = await studentService.askTutor(session, session.user.id, question);
+                    setTutorMessages((prev) => [
+                      ...prev,
+                      {
+                        role: 'assistant',
+                        content: answer.answer,
+                        meta: answer.source === 'ai' ? 'Réponse IA' : 'Réponse guidée',
+                      },
+                    ]);
+                  } finally {
+                    setIsAskingTutor(false);
+                  }
+                }}
+              />
+            )}
           </motion.div>
         </AnimatePresence>
       </main>
@@ -442,12 +475,38 @@ function AgendaView({ attendanceData, isLoading }: { attendanceData: StudentAtte
   );
 }
 
-function IATutorView({ studentName, recommendations }: { studentName: string; recommendations: StudentRecommendation[] }) {
+function IATutorView({
+  session,
+  studentId,
+  studentName,
+  recommendations,
+  tutorMessages,
+  tutorQuestion,
+  setTutorQuestion,
+  isAskingTutor,
+  onAskTutor,
+}: {
+  session?: AuthSession;
+  studentId?: string;
+  studentName: string;
+  recommendations: StudentRecommendation[];
+  tutorMessages: Array<{ role: 'student' | 'assistant'; content: string; meta?: string }>;
+  tutorQuestion: string;
+  setTutorQuestion: (value: string) => void;
+  isAskingTutor: boolean;
+  onAskTutor: (question: string) => Promise<void>;
+}) {
   const riskColors: Record<string, string> = {
     high: 'border-l-danger text-danger bg-danger/5',
     medium: 'border-l-amber-400 text-amber-700 bg-amber-50',
     low: 'border-l-success text-success bg-success/5',
   };
+
+  const quickPrompts = [
+    'Explique-moi mes erreurs en maths',
+    'Comment améliorer ma moyenne ?',
+    'Que dois-je réviser cette semaine ?',
+  ];
 
   return (
     <div className="space-y-8 pb-32">
@@ -500,26 +559,74 @@ function IATutorView({ studentName, recommendations }: { studentName: string; re
       {/* Suggestions de questions */}
       <div className="space-y-3">
         <h4 className="text-xs font-bold text-text-main uppercase tracking-widest">Posez une question à l'IA</h4>
-        {[
-          'Explique-moi les fonctions affines',
-          'Génère un QCM en Français',
-          'Aide-moi pour mon devoir de Physique',
-        ].map((prompt, i) => (
-          <button key={i} className="polished-card p-4 bg-white text-left text-sm font-semibold text-text-muted hover:text-primary hover:border-accent transition-all flex justify-between items-center group w-full">
+        {quickPrompts.map((prompt, i) => (
+          <button
+            key={i}
+            onClick={() => {
+              setTutorQuestion(prompt);
+              void onAskTutor(prompt);
+            }}
+            className="polished-card p-4 bg-white text-left text-sm font-semibold text-text-muted hover:text-primary hover:border-accent transition-all flex justify-between items-center group w-full"
+          >
             {prompt}
             <ChevronRight size={16} className="text-text-muted opacity-0 group-hover:opacity-100 transition-opacity" />
           </button>
         ))}
       </div>
 
+      <div className="space-y-3">
+        <h4 className="text-xs font-bold text-text-main uppercase tracking-widest">Conversation</h4>
+        <div className="space-y-3">
+          {tutorMessages.length ? tutorMessages.map((message, index) => (
+            <div
+              key={`${message.role}-${index}`}
+              className={`rounded-2xl p-4 ${message.role === 'student' ? 'bg-primary text-white' : 'bg-white border border-border text-text-main'}`}
+            >
+              {message.meta && (
+                <p className={`mb-2 text-[9px] font-bold uppercase tracking-widest ${message.role === 'student' ? 'text-white/70' : 'text-text-muted'}`}>
+                  {message.meta}
+                </p>
+              )}
+              <p className="text-sm font-medium leading-relaxed">{message.content}</p>
+            </div>
+          )) : (
+            <div className="polished-card p-6 bg-white text-sm text-text-muted">
+              Pose ta première question. L’IA tutor répondra à partir de tes vraies notes et absences.
+            </div>
+          )}
+          {isAskingTutor && (
+            <div className="rounded-2xl border border-border bg-white p-4 text-sm font-medium text-text-muted">
+              L’IA prépare une réponse personnalisée...
+            </div>
+          )}
+        </div>
+      </div>
+
       <div className="fixed bottom-28 left-6 right-6 max-w-xl mx-auto">
         <div className="relative">
           <input
             type="text"
+            value={tutorQuestion}
+            onChange={(event) => setTutorQuestion(event.target.value)}
+            onKeyDown={(event) => {
+              if (event.key === 'Enter' && tutorQuestion.trim() && !isAskingTutor) {
+                void onAskTutor(tutorQuestion.trim());
+                setTutorQuestion('');
+              }
+            }}
             placeholder="Demander à l'IA..."
             className="w-full pl-6 pr-14 py-5 bg-white border border-border rounded-full text-sm font-bold shadow-2xl shadow-indigo-100/50 outline-none focus:ring-2 focus:ring-indigo-500 transition-all"
           />
-          <button className="absolute right-3 top-1/2 -translate-y-1/2 p-3 bg-indigo-600 text-white rounded-full shadow-lg shadow-indigo-200 hover:scale-105 active:scale-95 transition-all">
+          <button
+            onClick={() => {
+              if (!tutorQuestion.trim() || isAskingTutor) return;
+              const question = tutorQuestion.trim();
+              setTutorQuestion('');
+              void onAskTutor(question);
+            }}
+            className="absolute right-3 top-1/2 -translate-y-1/2 p-3 bg-indigo-600 text-white rounded-full shadow-lg shadow-indigo-200 hover:scale-105 active:scale-95 transition-all disabled:opacity-50"
+            disabled={!studentId || !session || !tutorQuestion.trim() || isAskingTutor}
+          >
             <ArrowRight size={20} />
           </button>
         </div>

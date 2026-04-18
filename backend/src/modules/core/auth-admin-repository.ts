@@ -169,6 +169,46 @@ export const authAdminRepository = {
     return toAppUser(user);
   },
 
+  async createUser(input: {
+    schoolId: string;
+    firstName: string;
+    lastName: string;
+    email?: string;
+    phone?: string;
+    role: AppRole;
+    status?: AppUserStatus;
+  }): Promise<DevUser> {
+    if (!isPrismaEnabled()) {
+      const user: DevUser = {
+        id: createId("user"),
+        schoolId: input.schoolId,
+        firstName: input.firstName,
+        lastName: input.lastName,
+        email: input.email?.toLowerCase() ?? "",
+        phone: input.phone,
+        role: input.role,
+        status: input.status ?? "ACTIVE",
+      };
+      devStore.users.push(user);
+      return user;
+    }
+
+    const prisma = getPrismaClient();
+    const user = await prisma!.user.create({
+      data: {
+        schoolId: input.schoolId,
+        firstName: input.firstName,
+        lastName: input.lastName,
+        email: input.email?.toLowerCase() || null,
+        phone: input.phone,
+        role: input.role as Role,
+        status: (input.status ?? "ACTIVE") as UserStatus,
+        mustChangePassword: false,
+      },
+    });
+    return toAppUser(user);
+  },
+
   async createInvitation(input: {
     schoolId: string;
     userId: string;

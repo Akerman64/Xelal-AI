@@ -71,6 +71,7 @@ model Student {
   analyses      AIAnalysis[]
   teacherRecommendations TeacherRecommendation[]
   parentLinks   ParentStudent[]
+  messages      Message[]
   createdAt     DateTime           @default(now())
   updatedAt     DateTime           @updatedAt
 }
@@ -250,6 +251,22 @@ model AttendanceRecord {
   @@index([studentId, createdAt])
 }
 
+model Message {
+  id           String            @id @default(cuid())
+  teacherId    String
+  parentUserId String
+  studentId    String
+  content      String
+  senderRole   MessageSenderRole
+  teacherReadAt DateTime?
+  createdAt    DateTime          @default(now())
+  student      Student           @relation(fields: [studentId], references: [id])
+
+  @@index([teacherId, studentId, createdAt])
+  @@index([parentUserId, studentId, createdAt])
+  @@index([studentId, createdAt])
+}
+
 model AIAnalysis {
   id            String       @id @default(cuid())
   studentId      String
@@ -330,6 +347,11 @@ enum AttendanceStatus {
   PRESENT
   ABSENT
   LATE
+}
+
+enum MessageSenderRole {
+  TEACHER
+  PARENT
 }
 
 enum AnalysisType {
