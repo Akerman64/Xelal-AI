@@ -195,7 +195,7 @@ export default function AuthPortal({ role, onBack, onAuthenticated }: AuthPortal
 
           {mode === 'login' && role === 'teacher' && (
             <p className="mt-4 text-xs text-text-muted leading-relaxed">
-              Compte de test enseignant: <span className="font-bold">teacher@xelal.ai</span> / <span className="font-bold">teacher123</span>
+              Utilisez le compte enseignant créé par l'administration, puis activez-le avec le code reçu si nécessaire.
             </p>
           )}
         </div>

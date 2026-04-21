@@ -19,28 +19,39 @@ import {
   Send,
   MoreVertical,
   Clock,
+  LogOut,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { messageService, type MessageContact, type MessageThread } from '../services/messageService';
 import { Attendance, AuthSession, Class, Student } from '../types';
 import { analyzeClassPerformance, analyzeStudentPerformance } from '../services/geminiService';
 import {
+  bulkSaveTeacherGrades,
+  cancelTeacherTimeSlot,
+  createTeacherLesson,
+  createTeacherAssessment,
+  fetchTeacherAssignments,
   fetchTeacherDashboardData,
   fetchTeacherClassRecommendations,
   fetchTeacherClassRiskSignals,
   fetchTeacherRecommendations,
   fetchTeacherStudentRiskSignals,
+  fetchTeacherSubjects,
+  fetchTeacherLessons,
   fetchTeacherWorkspaceData,
   saveTeacherAttendance,
   saveTeacherClassRecommendation,
   saveTeacherRecommendation,
   sendTeacherWhatsAppMessage,
   type TeacherDashboardData,
+  type TeacherAssignment,
+  type TeacherCourseLesson,
   type TeacherLesson,
   type TeacherQuickContact,
   type TeacherRecommendationRecord,
   type TeacherWorkspaceData,
   updateTeacherGrade,
+  type ApiSubject,
 } from '../services/backendService';
 
 const formatToday = () =>
@@ -57,9 +68,10 @@ const average = (values: number[]) =>
 
 interface DashboardEnseignantProps {
   session?: AuthSession;
+  onLogout?: () => void;
 }
 
-export default function DashboardEnseignant({ session }: DashboardEnseignantProps) {
+export default function DashboardEnseignant({ session, onLogout }: DashboardEnseignantProps) {
   const [selectedTab, setSelectedTab] = useState('dashboard');
   const [selectedClass, setSelectedClass] = useState('');
   const [selectedStudent, setSelectedStudent] = useState<Student | null>(null);
@@ -99,6 +111,10 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
   const [selectedPeriodFilter, setSelectedPeriodFilter] = useState('all');
   const [attendanceClassId, setAttendanceClassId] = useState('');
   const [activeRecommendationId, setActiveRecommendationId] = useState<string | null>(null);
+  const [subjects, setSubjects] = useState<ApiSubject[]>([]);
+  const [assignments, setAssignments] = useState<TeacherAssignment[]>([]);
+  const [courseLessons, setCourseLessons] = useState<TeacherCourseLesson[]>([]);
+  const [reloadKey, setReloadKey] = useState(0);
 
   useEffect(() => {
     let isMounted = true;
@@ -110,9 +126,12 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
           throw new Error('Session enseignant absente.');
         }
 
-        const [dashboardData, workspaceData] = await Promise.all([
+        const [dashboardData, workspaceData, subjectsData, assignmentsData, lessonsData] = await Promise.all([
           fetchTeacherDashboardData(session),
           fetchTeacherWorkspaceData(session),
+          fetchTeacherSubjects().catch(() => []),
+          fetchTeacherAssignments().catch(() => []),
+          fetchTeacherLessons().catch(() => []),
         ]);
         if (!isMounted) {
           return;
@@ -129,7 +148,7 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
           dashboardData.classes.map((item) => ({
             id: item.id,
             name: item.name,
-            teacherId: 'teacher_1',
+            teacherId: dashboardData.teacherId,
             students: dashboardData.students
               .filter((student) => student.classId === item.id)
               .map((student) => student.id),
@@ -141,6 +160,9 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
           dashboardData.assessments.slice(0, 2).map((assessment) => assessment.title),
         );
         setWorkspace(workspaceData);
+        setSubjects(subjectsData);
+        setAssignments(assignmentsData);
+        setCourseLessons(lessonsData);
         setDataSourceLabel('api');
         setLoadError(null);
       } catch (error) {
@@ -157,6 +179,9 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
         setAssessmentsByClass({});
         setAssessmentTitles([]);
         setWorkspace({ upcomingLessons: [], weeklySchedule: [], quickContacts: [] });
+        setSubjects([]);
+        setAssignments([]);
+        setCourseLessons([]);
         setDataSourceLabel('api');
         setLoadError(
           error instanceof Error && error.message
@@ -175,7 +200,7 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
     return () => {
       isMounted = false;
     };
-  }, [session]);
+  }, [session, reloadKey]);
 
   const activeClass = useMemo(
     () => classesData.find((item) => item.name === selectedClass) ?? classesData[0] ?? null,
@@ -371,6 +396,7 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
     setContextStudent(student);
     setWhatsAppTargetStudent(student);
     setActiveRecommendationId(null);
+    setAiAnalysis(null);
     if (dataSourceLabel === 'api') {
       try {
         const history = await fetchTeacherRecommendations(student.id);
@@ -506,10 +532,10 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
 
   const handleAttendanceValidation = async (
     date: string,
+    course: TeacherLesson | undefined,
     entries: Array<{
       studentId: string;
       status: Attendance['status'];
-      reason?: string;
       minutesLate?: number;
     }>,
   ) => {
@@ -524,7 +550,7 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
         const nextAttendance = existing
           ? student.attendance.map((item) =>
               item.date === date
-                ? { ...item, status: draftEntry.status, reason: draftEntry.reason }
+                ? { ...item, status: draftEntry.status }
                 : item,
             )
           : [
@@ -534,7 +560,6 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
                 studentId: student.id,
                 date,
                 status: draftEntry.status,
-                reason: draftEntry.reason,
               },
             ];
 
@@ -551,10 +576,13 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
     }
 
     try {
-      await saveTeacherAttendance({
+      const result = await saveTeacherAttendance({
         classId: attendanceClassId,
         teacherId,
         date,
+        subjectId: course?.subjectId,
+        startTime: course?.startTime,
+        endTime: course?.endTime,
         entries: entries.map((entry) => ({
           studentId: entry.studentId,
           status:
@@ -563,13 +591,23 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
               : entry.status === 'absent'
                 ? 'ABSENT'
                 : 'LATE',
-          reason: entry.reason,
           minutesLate: entry.status === 'late' ? entry.minutesLate ?? 10 : undefined,
         })),
       });
-      setSaveMessage("Appel validé et notifications envoyées pour les absences/retards non justifiés.");
-    } catch {
-      setSaveMessage("Impossible de valider l'appel.");
+      if ((result.notificationsSent ?? 0) > 0) {
+        setSaveMessage(`Appel validé. ${result.notificationsSent} notification(s) WhatsApp envoyée(s).`);
+      } else {
+        const firstReason = result.notifications
+          ?.flatMap((item) => item.deliveries ?? [])
+          .find((delivery) => !delivery.delivered)?.reason;
+        setSaveMessage(
+          firstReason
+            ? `Appel validé, mais WhatsApp non délivré : ${firstReason}`
+            : "Appel validé. Aucune notification à envoyer: seulement présents, motifs renseignés, ou aucun parent/téléphone lié.",
+        );
+      }
+    } catch (error) {
+      setSaveMessage(error instanceof Error ? `Impossible de valider l'appel: ${error.message}` : "Impossible de valider l'appel.");
     }
   };
 
@@ -589,6 +627,7 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
             { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
             { id: 'classes', label: 'Mes Classes', icon: Users },
             { id: 'notes', label: 'Carnet de Notes', icon: BookOpen },
+            { id: 'lessons', label: 'Leçons', icon: BrainCircuit },
             { id: 'absences', label: 'Absences', icon: Calendar },
             { id: 'messages', label: 'Messages Parents', icon: MessageSquare },
             { id: 'schedule', label: 'Emploi du temps', icon: Clock },
@@ -616,6 +655,15 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
               <p className="text-[10px] text-white/50 truncate">{dataSourceLabel === 'api' ? 'Connecte au backend' : 'Mode demo local'}</p>
             </div>
           </div>
+          {onLogout && (
+            <button
+              onClick={onLogout}
+              className="mt-4 flex w-full items-center justify-center gap-2 rounded-xl bg-white/10 px-4 py-3 text-xs font-bold text-white/80 transition hover:bg-white/15 hover:text-white"
+            >
+              <LogOut size={16} />
+              Déconnexion
+            </button>
+          )}
         </div>
       </aside>
 
@@ -715,6 +763,11 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
                   classes={classesData}
                   students={filteredGradebookStudents}
                   assessmentTitles={assessmentTitles}
+                  assessments={gradebookAssessments}
+                  subjects={subjects}
+                  assignments={assignments}
+                  lessons={courseLessons}
+                  teacherId={teacherId}
                   subjectOptions={subjectOptions}
                   selectedSubjectFilter={selectedSubjectFilter}
                   setSelectedSubjectFilter={setSelectedSubjectFilter}
@@ -725,6 +778,14 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
                   openStudentDetails={openStudentDetails}
                   handleAnalyze={handleAnalyze}
                   onGradeUpdate={handleGradeUpdate}
+                  onSaved={() => setReloadKey((value) => value + 1)}
+                />
+              )}
+              {selectedTab === 'lessons' && (
+                <LessonsView
+                  assignments={assignments}
+                  lessons={courseLessons}
+                  onSaved={() => setReloadKey((value) => value + 1)}
                 />
               )}
               {selectedTab === 'absences' && (
@@ -737,6 +798,7 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
                   setSelectedClassId={setAttendanceClassId}
                   onAttendanceValidate={handleAttendanceValidation}
                   openStudentDetails={openStudentDetails}
+                  lessons={workspace.weeklySchedule}
                 />
               )}
               {selectedTab === 'messages' && <MessagesView session={session} />}
@@ -776,8 +838,12 @@ export default function DashboardEnseignant({ session }: DashboardEnseignantProp
               <MiniStat label="Retards" value={String(contextStudent.attendance.filter((item) => item.status === 'late').length)} />
             </div>
             <div className="mt-5 flex flex-wrap gap-2">
-              <button onClick={() => handleAnalyze(contextStudent)} className="rounded-xl bg-primary px-4 py-3 text-xs font-bold text-white">
-                Analyser
+              <button
+                onClick={() => handleAnalyze(contextStudent)}
+                disabled={isAnalyzing || isAnalyzingClass}
+                className="rounded-xl bg-primary px-4 py-3 text-xs font-bold text-white disabled:opacity-50 disabled:cursor-not-allowed"
+              >
+                {isAnalyzing ? 'Analyse en cours...' : 'Analyser'}
               </button>
               <button onClick={() => { setSelectedStudent(contextStudent); setWhatsAppTargetStudent(contextStudent); }} className="rounded-xl bg-[#e7f3ef] px-4 py-3 text-xs font-bold text-[#075e54]">
                 WhatsApp
@@ -1262,13 +1328,34 @@ function ScheduleView({ lessons, onLessonClick }: { lessons: TeacherLesson[]; on
   }, {});
 
   const days = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi'];
+  const [cancelTarget, setCancelTarget] = useState<TeacherLesson | null>(null);
+  const [cancelDate, setCancelDate] = useState(new Date().toISOString().slice(0, 10));
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelMsg, setCancelMsg] = useState<string | null>(null);
+
+  const handleCancelSlot = async () => {
+    if (!cancelTarget || !cancelReason.trim()) return;
+    try {
+      await cancelTeacherTimeSlot(cancelTarget.id, { date: cancelDate, reason: cancelReason.trim() });
+      setCancelMsg(`Créneau "${cancelTarget.subjectName}" du ${cancelDate} marqué annulé. Motif : ${cancelReason}`);
+      setCancelTarget(null);
+      setCancelReason('');
+    } catch (error) {
+      setCancelMsg(error instanceof Error ? `Annulation impossible: ${error.message}` : 'Annulation impossible.');
+    }
+  };
 
   return (
     <div className="space-y-8">
+      {cancelMsg && (
+        <div className="rounded-2xl border border-success/30 bg-success/5 px-4 py-3 text-xs font-semibold text-success">
+          {cancelMsg}
+        </div>
+      )}
       <div className="flex items-center justify-between rounded-2xl border border-border bg-white p-5 shadow-sm">
         <div>
           <h3 className="text-sm font-bold text-text-main">Emploi du temps enseignant</h3>
-          <p className="text-[10px] font-bold uppercase tracking-wider text-text-muted">Vue hebdomadaire</p>
+          <p className="text-[10px] font-bold uppercase tracking-wider text-text-muted">Vue hebdomadaire · Cliquez sur un cours pour le détail ou survolez pour annuler</p>
         </div>
       </div>
       <div className="grid grid-cols-1 gap-4 lg:grid-cols-5">
@@ -1277,17 +1364,24 @@ function ScheduleView({ lessons, onLessonClick }: { lessons: TeacherLesson[]; on
             <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted">{day}</p>
             <div className="mt-4 space-y-3">
               {(grouped[day] || []).length ? grouped[day].map((lesson) => (
-                <button
-                  key={lesson.id}
-                  onClick={() => onLessonClick(lesson)}
-                  className="w-full rounded-2xl border border-border bg-bg/40 p-4 text-left transition hover:border-accent hover:bg-primary-light/40"
-                >
-                  <p className="text-xs font-bold text-text-main">{lesson.subjectName}</p>
-                  <p className="mt-1 text-[11px] font-medium text-text-muted">{lesson.className}</p>
-                  <p className="mt-3 text-[10px] font-bold uppercase tracking-wider text-primary">
-                    {lesson.startTime} - {lesson.endTime} • {lesson.room}
-                  </p>
-                </button>
+                <div key={lesson.id} className="relative group">
+                  <button
+                    onClick={() => onLessonClick(lesson)}
+                    className="w-full rounded-2xl border border-border bg-bg/40 p-4 text-left transition hover:border-accent hover:bg-primary-light/40"
+                  >
+                    <p className="text-xs font-bold text-text-main">{lesson.subjectName}</p>
+                    <p className="mt-1 text-[11px] font-medium text-text-muted">{lesson.className}</p>
+                    <p className="mt-3 text-[10px] font-bold uppercase tracking-wider text-primary">
+                      {lesson.startTime} - {lesson.endTime} • {lesson.room}
+                    </p>
+                  </button>
+                  <button
+                    onClick={() => { setCancelTarget(lesson); setCancelReason(''); }}
+                    className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity rounded-lg bg-danger/10 px-2 py-1 text-[9px] font-bold text-danger hover:bg-danger/20"
+                  >
+                    Annuler
+                  </button>
+                </div>
               )) : (
                 <div className="rounded-2xl border border-dashed border-border bg-bg/20 p-4 text-xs font-medium text-text-muted">
                   Aucun cours prévu.
@@ -1296,6 +1390,183 @@ function ScheduleView({ lessons, onLessonClick }: { lessons: TeacherLesson[]; on
             </div>
           </div>
         ))}
+      </div>
+
+      {/* Modal annulation enseignant */}
+      <AnimatePresence>
+        {cancelTarget && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+          >
+            <motion.div
+              className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+              initial={{ scale: 0.95, y: 20 }} animate={{ scale: 1, y: 0 }} exit={{ scale: 0.95, y: 20 }}
+            >
+              <h3 className="text-sm font-bold text-text-main">Signaler une annulation de cours</h3>
+              <div className="mt-2 rounded-xl bg-bg border border-border p-3">
+                <p className="text-xs font-bold text-text-main">{cancelTarget.subjectName} — {cancelTarget.day}</p>
+                <p className="text-[10px] text-text-muted font-medium">{cancelTarget.startTime}–{cancelTarget.endTime} · {cancelTarget.className}</p>
+              </div>
+              <p className="mt-4 text-xs font-bold text-text-main">Motif <span className="text-danger">*</span></p>
+              <input
+                type="date"
+                value={cancelDate}
+                onChange={(e) => setCancelDate(e.target.value)}
+                className="mt-2 w-full rounded-xl border border-border px-3 py-2 text-xs font-bold outline-none focus:ring-1 focus:ring-primary"
+              />
+              <textarea
+                rows={3}
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                placeholder="Ex : Maladie, sortie scolaire, réunion pédagogique…"
+                className="mt-2 w-full rounded-xl border border-border px-3 py-2 text-xs font-medium outline-none focus:ring-1 focus:ring-primary resize-none"
+              />
+              <div className="mt-4 flex justify-end gap-2">
+                <button onClick={() => setCancelTarget(null)} className="rounded-xl border border-border px-4 py-2 text-xs font-bold text-text-muted hover:bg-bg">
+                  Fermer
+                </button>
+                <button
+                  onClick={handleCancelSlot}
+                  disabled={!cancelReason.trim()}
+                  className="rounded-xl bg-danger px-4 py-2 text-xs font-bold text-white disabled:opacity-50"
+                >
+                  Confirmer
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function LessonsView({
+  assignments,
+  lessons,
+  onSaved,
+}: {
+  assignments: TeacherAssignment[];
+  lessons: TeacherCourseLesson[];
+  onSaved: () => void;
+}) {
+  const [classId, setClassId] = useState(assignments[0]?.classId ?? '');
+  const [subjectId, setSubjectId] = useState(assignments[0]?.subjectId ?? '');
+  const [title, setTitle] = useState('');
+  const [description, setDescription] = useState('');
+  const [objectives, setObjectives] = useState('');
+  const [orderIndex, setOrderIndex] = useState(1);
+  const [message, setMessage] = useState<string | null>(null);
+  const [saving, setSaving] = useState(false);
+
+  const classOptions = useMemo(() => {
+    const map = new Map<string, string>();
+    assignments.forEach((assignment) => map.set(assignment.classId, assignment.className));
+    return Array.from(map.entries()).map(([id, name]) => ({ id, name }));
+  }, [assignments]);
+
+  const subjectOptions = useMemo(
+    () => assignments
+      .filter((assignment) => assignment.classId === classId)
+      .map((assignment) => ({ id: assignment.subjectId, name: assignment.subjectName })),
+    [assignments, classId],
+  );
+
+  useEffect(() => {
+    if (!classOptions.some((item) => item.id === classId)) {
+      setClassId(classOptions[0]?.id ?? '');
+    }
+  }, [classOptions, classId]);
+
+  useEffect(() => {
+    if (!subjectOptions.some((item) => item.id === subjectId)) {
+      setSubjectId(subjectOptions[0]?.id ?? '');
+    }
+  }, [subjectOptions, subjectId]);
+
+  const filteredLessons = lessons
+    .filter((lesson) => (!classId || lesson.classId === classId) && (!subjectId || lesson.subjectId === subjectId))
+    .sort((left, right) => left.orderIndex - right.orderIndex || left.title.localeCompare(right.title));
+
+  const handleCreate = async () => {
+    if (!classId || !subjectId || !title.trim()) {
+      setMessage('Classe, matière et titre sont obligatoires.');
+      return;
+    }
+
+    setSaving(true);
+    setMessage(null);
+    try {
+      await createTeacherLesson({
+        classId,
+        subjectId,
+        title: title.trim(),
+        description: description.trim() || undefined,
+        objectives: objectives.trim() || undefined,
+        orderIndex,
+      });
+      setTitle('');
+      setDescription('');
+      setObjectives('');
+      setOrderIndex((value) => value + 1);
+      setMessage('Leçon enregistrée.');
+      onSaved();
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : 'Création impossible.');
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  return (
+    <div className="space-y-8">
+      <div className="rounded-2xl border border-border bg-white p-5 shadow-sm">
+        <div className="flex flex-col gap-4 lg:flex-row lg:items-start lg:justify-between">
+          <div>
+            <h3 className="text-sm font-bold text-text-main">Leçons par matière</h3>
+            <p className="mt-1 text-[10px] font-bold uppercase tracking-wider text-text-muted">
+              Ces leçons serviront ensuite à affiner les recommandations IA.
+            </p>
+          </div>
+          <div className="flex flex-wrap gap-3">
+            <select value={classId} onChange={(event) => setClassId(event.target.value)} className="rounded-xl border border-border bg-white px-4 py-2 text-xs font-bold outline-none">
+              {classOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+            <select value={subjectId} onChange={(event) => setSubjectId(event.target.value)} className="rounded-xl border border-border bg-white px-4 py-2 text-xs font-bold outline-none">
+              {subjectOptions.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+            </select>
+          </div>
+        </div>
+
+        <div className="mt-5 grid gap-3 lg:grid-cols-[80px_1fr_1fr_1fr_auto]">
+          <input type="number" min={1} value={orderIndex} onChange={(event) => setOrderIndex(Number(event.target.value))} className="rounded-xl border border-border px-3 py-2 text-xs font-bold outline-none" />
+          <input value={title} onChange={(event) => setTitle(event.target.value)} placeholder="Titre de la leçon" className="rounded-xl border border-border px-3 py-2 text-xs font-semibold outline-none" />
+          <input value={objectives} onChange={(event) => setObjectives(event.target.value)} placeholder="Objectifs pédagogiques" className="rounded-xl border border-border px-3 py-2 text-xs font-semibold outline-none" />
+          <input value={description} onChange={(event) => setDescription(event.target.value)} placeholder="Notions, prérequis, exercices..." className="rounded-xl border border-border px-3 py-2 text-xs font-semibold outline-none" />
+          <button onClick={handleCreate} disabled={saving || !assignments.length} className="rounded-xl bg-primary px-5 py-2 text-xs font-bold text-white disabled:opacity-50">
+            Ajouter
+          </button>
+        </div>
+        {message && <p className="mt-3 text-[11px] font-semibold text-text-muted">{message}</p>}
+      </div>
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        {filteredLessons.map((lesson) => (
+          <div key={lesson.id} className="rounded-2xl border border-border bg-white p-5 shadow-sm">
+            <p className="text-[10px] font-bold uppercase tracking-wider text-primary">
+              Séance {lesson.orderIndex} • {lesson.className} • {lesson.subjectName}
+            </p>
+            <h4 className="mt-2 text-sm font-bold text-text-main">{lesson.title}</h4>
+            {lesson.objectives && <p className="mt-3 text-xs font-semibold text-text-main">{lesson.objectives}</p>}
+            {lesson.description && <p className="mt-2 text-xs leading-relaxed text-text-muted">{lesson.description}</p>}
+          </div>
+        ))}
+        {!filteredLessons.length && (
+          <div className="rounded-2xl border border-dashed border-border bg-white p-8 text-center text-sm font-semibold text-text-muted">
+            Aucune leçon enregistrée pour cette classe et cette matière.
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1541,6 +1812,11 @@ function GradebookView({
   classes,
   students,
   assessmentTitles,
+  assessments,
+  subjects,
+  assignments,
+  lessons,
+  teacherId,
   subjectOptions,
   selectedSubjectFilter,
   setSelectedSubjectFilter,
@@ -1551,11 +1827,216 @@ function GradebookView({
   openStudentDetails,
   handleAnalyze,
   onGradeUpdate,
+  onSaved,
 }: any) {
   const multipleSubjects = subjectOptions.length > 1;
+  const allowedAssignments = assignments.filter((assignment: TeacherAssignment) => assignment.classId === selectedClassId);
+  const allowedSubjects = subjects.filter((subject: ApiSubject) =>
+    allowedAssignments.some((assignment: TeacherAssignment) => assignment.subjectId === subject.id),
+  );
+  const [assessmentForm, setAssessmentForm] = useState({
+    title: '',
+    subjectId: '',
+    type: 'QUIZ' as 'QUIZ' | 'HOMEWORK' | 'EXAM' | 'PROJECT',
+    coefficient: 1,
+    date: new Date().toISOString().slice(0, 10),
+    lessonIds: [] as string[],
+  });
+  const [selectedAssessmentId, setSelectedAssessmentId] = useState('');
+  const [gradeDrafts, setGradeDrafts] = useState<Record<string, string>>({});
+  const [isSavingAssessment, setIsSavingAssessment] = useState(false);
+  const [localMessage, setLocalMessage] = useState<string | null>(null);
+  const assessmentLessons = (lessons as TeacherCourseLesson[]).filter(
+    (lesson) => lesson.classId === selectedClassId && lesson.subjectId === assessmentForm.subjectId,
+  );
+
+  useEffect(() => {
+    if (!allowedSubjects.some((subject: ApiSubject) => subject.id === assessmentForm.subjectId)) {
+      setAssessmentForm((prev) => ({ ...prev, subjectId: allowedSubjects[0]?.id ?? '' }));
+    }
+  }, [allowedSubjects, assessmentForm.subjectId]);
+
+  useEffect(() => {
+    setSelectedAssessmentId(assessments[0]?.id ?? '');
+    setGradeDrafts({});
+  }, [assessments, selectedClassId]);
+
+  const handleCreateAssessment = async () => {
+    if (!assessmentForm.title.trim() || !assessmentForm.subjectId) {
+      setLocalMessage("Titre et matière obligatoires pour créer l'évaluation.");
+      return;
+    }
+
+    setIsSavingAssessment(true);
+    try {
+      const created = await createTeacherAssessment({
+        classId: selectedClassId,
+        subjectId: assessmentForm.subjectId,
+        teacherId,
+        title: assessmentForm.title.trim(),
+        type: assessmentForm.type,
+        coefficient: Number(assessmentForm.coefficient || 1),
+        date: assessmentForm.date,
+        lessonIds: assessmentForm.lessonIds,
+      });
+      setLocalMessage(`Évaluation créée: ${created.title}.`);
+      setAssessmentForm((prev) => ({ ...prev, title: '', lessonIds: [] }));
+      onSaved?.();
+    } catch (error) {
+      setLocalMessage(error instanceof Error ? `Création impossible: ${error.message}` : "Création impossible.");
+    } finally {
+      setIsSavingAssessment(false);
+    }
+  };
+
+  const handleBulkGrades = async () => {
+    if (!selectedAssessmentId) {
+      setLocalMessage("Crée ou sélectionne d'abord une évaluation.");
+      return;
+    }
+
+    const entries = Object.entries(gradeDrafts)
+      .filter(([, value]) => value.trim() !== '')
+      .map(([studentId, value]) => ({ studentId, value: Number(value) }))
+      .filter((entry) => Number.isFinite(entry.value) && entry.value >= 0 && entry.value <= 20);
+
+    if (!entries.length) {
+      setLocalMessage("Aucune note valide à enregistrer.");
+      return;
+    }
+
+    setIsSavingAssessment(true);
+    try {
+      const result = await bulkSaveTeacherGrades(selectedAssessmentId, entries);
+      setLocalMessage(`${result.count} note(s) enregistrée(s).`);
+      setGradeDrafts({});
+      onSaved?.();
+    } catch (error) {
+      setLocalMessage(error instanceof Error ? `Enregistrement impossible: ${error.message}` : "Enregistrement impossible.");
+    } finally {
+      setIsSavingAssessment(false);
+    }
+  };
 
   return (
     <div className="space-y-8">
+      <div className="rounded-2xl border border-border bg-white p-5 shadow-sm">
+        <div className="grid gap-4 lg:grid-cols-[1.2fr_1fr]">
+          <div>
+            <h3 className="text-sm font-bold text-text-main">Créer une évaluation</h3>
+            <div className="mt-4 grid gap-3 md:grid-cols-2 lg:grid-cols-5">
+              <input
+                value={assessmentForm.title}
+                onChange={(event) => setAssessmentForm((prev) => ({ ...prev, title: event.target.value }))}
+                placeholder="Ex: Devoir chapitre 2"
+                className="rounded-xl border border-border px-3 py-2 text-xs font-semibold outline-none lg:col-span-2"
+              />
+              <select
+                value={assessmentForm.subjectId}
+                onChange={(event) => setAssessmentForm((prev) => ({ ...prev, subjectId: event.target.value }))}
+                className="rounded-xl border border-border bg-white px-3 py-2 text-xs font-bold outline-none"
+              >
+                <option value="">Matière</option>
+                {allowedSubjects.map((subject: ApiSubject) => (
+                  <option key={subject.id} value={subject.id}>{subject.name}</option>
+                ))}
+              </select>
+              <select
+                value={assessmentForm.type}
+                onChange={(event) => setAssessmentForm((prev) => ({ ...prev, type: event.target.value as typeof assessmentForm.type }))}
+                className="rounded-xl border border-border bg-white px-3 py-2 text-xs font-bold outline-none"
+              >
+                <option value="QUIZ">Quiz</option>
+                <option value="HOMEWORK">Devoir</option>
+                <option value="EXAM">Examen</option>
+                <option value="PROJECT">Projet</option>
+              </select>
+              <input
+                type="date"
+                value={assessmentForm.date}
+                onChange={(event) => setAssessmentForm((prev) => ({ ...prev, date: event.target.value }))}
+                className="rounded-xl border border-border px-3 py-2 text-xs font-bold outline-none"
+              />
+              <input
+                type="number"
+                min={0.5}
+                step={0.5}
+                value={assessmentForm.coefficient}
+                onChange={(event) => setAssessmentForm((prev) => ({ ...prev, coefficient: Number(event.target.value) }))}
+                className="rounded-xl border border-border px-3 py-2 text-xs font-bold outline-none"
+              />
+              <button
+                onClick={handleCreateAssessment}
+                disabled={isSavingAssessment || !allowedSubjects.length}
+                className="rounded-xl bg-primary px-4 py-2 text-xs font-bold text-white disabled:opacity-50"
+              >
+                Créer
+              </button>
+            </div>
+            {!!assessmentLessons.length && (
+              <div className="mt-4 rounded-xl border border-border bg-bg p-3">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted">Leçons concernées</p>
+                <div className="mt-3 flex flex-wrap gap-2">
+                  {assessmentLessons.map((lesson) => {
+                    const checked = assessmentForm.lessonIds.includes(lesson.id);
+                    return (
+                      <button
+                        key={lesson.id}
+                        type="button"
+                        onClick={() =>
+                          setAssessmentForm((prev) => ({
+                            ...prev,
+                            lessonIds: checked
+                              ? prev.lessonIds.filter((id) => id !== lesson.id)
+                              : [...prev.lessonIds, lesson.id],
+                          }))
+                        }
+                        className={`rounded-xl px-3 py-2 text-[11px] font-bold ${
+                          checked ? 'bg-primary text-white' : 'bg-white text-text-muted'
+                        }`}
+                      >
+                        {lesson.orderIndex}. {lesson.title}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+            {!allowedSubjects.length && (
+              <p className="mt-3 text-[11px] font-semibold text-danger">
+                Aucune matière affectée pour cette classe.
+              </p>
+            )}
+          </div>
+
+          <div>
+            <h3 className="text-sm font-bold text-text-main">Saisir les notes</h3>
+            <div className="mt-4 flex flex-wrap gap-3">
+              <select
+                value={selectedAssessmentId}
+                onChange={(event) => setSelectedAssessmentId(event.target.value)}
+                className="min-w-48 flex-1 rounded-xl border border-border bg-white px-3 py-2 text-xs font-bold outline-none"
+              >
+                <option value="">Choisir une évaluation</option>
+                {assessments.map((assessment: any) => (
+                  <option key={assessment.id} value={assessment.id}>
+                    {assessment.title} • {assessment.subject}
+                  </option>
+                ))}
+              </select>
+              <button
+                onClick={handleBulkGrades}
+                disabled={isSavingAssessment || !selectedAssessmentId}
+                className="rounded-xl bg-success px-4 py-2 text-xs font-bold text-white disabled:opacity-50"
+              >
+                Enregistrer les notes
+              </button>
+            </div>
+            {localMessage && <p className="mt-3 text-[11px] font-semibold text-text-muted">{localMessage}</p>}
+          </div>
+        </div>
+      </div>
+
       <div className="rounded-2xl border border-border bg-white p-5 shadow-sm">
         <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
           <div>
@@ -1714,6 +2195,18 @@ function GradebookView({
                 </td>
                 <td className="px-6 py-4 text-right">
                   <div className="flex items-center justify-end gap-2">
+                    {selectedAssessmentId && (
+                      <input
+                        type="number"
+                        min={0}
+                        max={20}
+                        step={0.5}
+                        value={gradeDrafts[student.id] ?? ''}
+                        onChange={(event) => setGradeDrafts((prev) => ({ ...prev, [student.id]: event.target.value }))}
+                        placeholder="/20"
+                        className="w-16 rounded-lg border border-border bg-white px-2 py-2 text-center text-xs font-bold outline-none"
+                      />
+                    )}
                     <button
                       onClick={() => openStudentDetails(student)}
                       className="rounded-xl bg-bg px-3 py-2 text-[11px] font-bold text-text-main"
@@ -1753,13 +2246,24 @@ function AttendanceView({
   setSelectedClassId,
   onAttendanceValidate,
   openStudentDetails,
+  lessons = [],
 }: any) {
   const [currentDate, setCurrentDate] = useState(new Date().toISOString().split('T')[0]);
-  const [draftEntries, setDraftEntries] = useState<Record<string, { status: Attendance['status']; reason: string }>>({});
+  const [selectedCourseId, setSelectedCourseId] = useState('');
+  const [draftEntries, setDraftEntries] = useState<Record<string, { status: Attendance['status'] }>>({});
+  const courseOptions = (lessons as TeacherLesson[]).filter((lesson) => lesson.classId === selectedClassId);
+  const selectedCourse =
+    courseOptions.find((lesson) => `${lesson.id}-${lesson.subjectId}` === selectedCourseId) ??
+    courseOptions[0];
 
   useEffect(() => {
     setDraftEntries({});
   }, [currentDate, selectedClassId]);
+
+  useEffect(() => {
+    const nextCourse = (lessons as TeacherLesson[]).find((lesson) => lesson.classId === selectedClassId);
+    setSelectedCourseId(nextCourse ? `${nextCourse.id}-${nextCourse.subjectId}` : '');
+  }, [lessons, selectedClassId]);
 
   const currentEntry = (student: Student) => {
     const draft = draftEntries[student.id];
@@ -1768,7 +2272,6 @@ function AttendanceView({
     const existing = student.attendance.find((a) => a.date === currentDate);
     return {
       status: existing?.status ?? 'present',
-      reason: existing?.reason ?? '',
     };
   };
 
@@ -1809,6 +2312,21 @@ function AttendanceView({
                 </option>
               ))}
             </select>
+            <select
+              value={selectedCourse ? `${selectedCourse.id}-${selectedCourse.subjectId}` : selectedCourseId}
+              onChange={(event) => setSelectedCourseId(event.target.value)}
+              className="rounded-xl border border-border bg-white px-4 py-2 text-xs font-bold outline-none"
+            >
+              {courseOptions.length ? (
+                courseOptions.map((lesson) => (
+                  <option key={`${lesson.id}-${lesson.subjectId}`} value={`${lesson.id}-${lesson.subjectId}`}>
+                    {lesson.subjectName} · {lesson.day} {lesson.startTime}-{lesson.endTime}
+                  </option>
+                ))
+              ) : (
+                <option value="">Aucun cours affecté</option>
+              )}
+            </select>
             <input 
               type="date" 
               value={currentDate} 
@@ -1826,17 +2344,17 @@ function AttendanceView({
           <div className="mt-4 flex items-center justify-between gap-4">
             <p className="text-[11px] font-medium text-text-muted">
               {hasPendingChanges
-                ? "Des modifications sont en attente. Valide l'appel pour enregistrer et notifier si nécessaire."
-                : "Les parents sont notifiés uniquement après validation de l'appel, et seulement pour les absences/retards non justifiés."}
+                ? "Des modifications sont en attente. Tu peux réenregistrer l'appel si une erreur a été corrigée."
+                : "Un appel peut être corrigé puis réenregistré. Les motifs seront renseignés par les parents via WhatsApp."}
             </p>
             <button
               onClick={() =>
                 onAttendanceValidate(
                   currentDate,
+                  selectedCourse,
                   stagedStudents.map(({ student, entry }) => ({
                     studentId: student.id,
                     status: entry.status,
-                    reason: entry.reason.trim() || undefined,
                     minutesLate: entry.status === 'late' ? 10 : undefined,
                   })),
                 )
@@ -1850,7 +2368,7 @@ function AttendanceView({
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
-        {stagedStudents.map(({ student, entry }: { student: Student; entry: { status: Attendance['status']; reason: string } }) => {
+        {stagedStudents.map(({ student, entry }: { student: Student; entry: { status: Attendance['status'] } }) => {
           const isAbsent = entry.status === 'absent';
           const isLate = entry.status === 'late';
           return (
@@ -1878,29 +2396,18 @@ function AttendanceView({
                 </div>
               </div>
               {(isAbsent || isLate) && (
-                <textarea
-                  value={entry.reason}
-                  onChange={(event) =>
-                    setDraftEntries((prev) => ({
-                      ...prev,
-                      [student.id]: {
-                        ...entry,
-                        reason: event.target.value,
-                      },
-                    }))
-                  }
-                  placeholder={isAbsent ? "Motif si l'absence est justifiée..." : "Motif si le retard est justifié..."}
-                  className="mt-4 h-20 w-full rounded-xl border border-border bg-white px-3 py-3 text-[11px] outline-none"
-                />
+                <div className="mt-4 rounded-xl border border-border bg-white px-3 py-3 text-[11px] font-semibold text-text-muted">
+                  Motif en attente du parent via WhatsApp.
+                </div>
               )}
               <div className="mt-4 flex gap-2">
-                 <button onClick={() => setDraftEntries((prev) => ({ ...prev, [student.id]: { status: 'present', reason: '' } }))} className={`flex-1 rounded-xl px-3 py-3 text-xs font-bold transition-all ${!isAbsent && !isLate ? 'bg-success text-white shadow-lg shadow-green-100' : 'bg-bg text-text-muted hover:bg-gray-200'}`}>
+                 <button onClick={() => setDraftEntries((prev) => ({ ...prev, [student.id]: { status: 'present' } }))} className={`flex-1 rounded-xl px-3 py-3 text-xs font-bold transition-all ${!isAbsent && !isLate ? 'bg-success text-white shadow-lg shadow-green-100' : 'bg-bg text-text-muted hover:bg-gray-200'}`}>
                    Présent
                  </button>
-                 <button onClick={() => setDraftEntries((prev) => ({ ...prev, [student.id]: { status: 'late', reason: prev[student.id]?.reason ?? '' } }))} className={`flex-1 rounded-xl px-3 py-3 text-xs font-bold transition-all ${isLate ? 'bg-warning text-white shadow-lg' : 'bg-bg text-text-muted hover:bg-gray-200'}`}>
+                 <button onClick={() => setDraftEntries((prev) => ({ ...prev, [student.id]: { status: 'late' } }))} className={`flex-1 rounded-xl px-3 py-3 text-xs font-bold transition-all ${isLate ? 'bg-warning text-white shadow-lg' : 'bg-bg text-text-muted hover:bg-gray-200'}`}>
                    Retard
                  </button>
-                 <button onClick={() => setDraftEntries((prev) => ({ ...prev, [student.id]: { status: 'absent', reason: prev[student.id]?.reason ?? '' } }))} className={`flex-1 rounded-xl px-3 py-3 text-xs font-bold transition-all ${isAbsent ? 'bg-danger text-white shadow-lg shadow-red-100' : 'bg-bg text-text-muted hover:bg-gray-200'}`}>
+                 <button onClick={() => setDraftEntries((prev) => ({ ...prev, [student.id]: { status: 'absent' } }))} className={`flex-1 rounded-xl px-3 py-3 text-xs font-bold transition-all ${isAbsent ? 'bg-danger text-white shadow-lg shadow-red-100' : 'bg-bg text-text-muted hover:bg-gray-200'}`}>
                    Absent
                  </button>
               </div>

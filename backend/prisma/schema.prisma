@@ -141,6 +141,8 @@ model Class {
   assessments    Assessment[]
   attendanceSessions AttendanceSession[]
   teacherRecommendations TeacherRecommendation[]
+  timeSlots      TimeSlot[]
+  lessons        Lesson[]
   createdAt      DateTime            @default(now())
   updatedAt      DateTime            @updatedAt
 
@@ -170,6 +172,8 @@ model Subject {
   assignments        TeacherAssignment[]
   assessments        Assessment[]
   attendanceSessions AttendanceSession[]
+  timeSlots          TimeSlot[]
+  lessons            Lesson[]
   createdAt          DateTime            @default(now())
   updatedAt          DateTime            @updatedAt
 
@@ -177,13 +181,14 @@ model Subject {
 }
 
 model TeacherAssignment {
-  id        String   @id @default(cuid())
-  teacherId String
-  classId   String
-  subjectId String
-  teacher   Teacher  @relation(fields: [teacherId], references: [id])
-  class     Class    @relation(fields: [classId], references: [id])
-  subject   Subject  @relation(fields: [subjectId], references: [id])
+  id          String  @id @default(cuid())
+  teacherId   String
+  classId     String
+  subjectId   String
+  coefficient Float?
+  teacher     Teacher @relation(fields: [teacherId], references: [id])
+  class       Class   @relation(fields: [classId], references: [id])
+  subject     Subject @relation(fields: [subjectId], references: [id])
 
   @@unique([teacherId, classId, subjectId])
 }
@@ -202,8 +207,20 @@ model Assessment {
   subject      Subject        @relation(fields: [subjectId], references: [id])
   term         Term           @relation(fields: [termId], references: [id])
   grades       Grade[]
+  lessonLinks  AssessmentLesson[]
 
   @@index([classId, subjectId, date])
+}
+
+model AssessmentLesson {
+  id           String     @id @default(cuid())
+  assessmentId String
+  lessonId     String
+  assessment   Assessment @relation(fields: [assessmentId], references: [id])
+  lesson       Lesson     @relation(fields: [lessonId], references: [id])
+
+  @@unique([assessmentId, lessonId])
+  @@index([lessonId])
 }
 
 model Grade {
@@ -370,4 +387,62 @@ enum RiskLevel {
 enum RecommendationScope {
   STUDENT
   CLASS
+}
+
+model TimeSlot {
+  id        String  @id @default(cuid())
+  classId   String
+  subjectId String
+  teacherId String
+  day       WeekDay
+  startTime String
+  endTime   String
+  room      String?
+  class     Class   @relation(fields: [classId], references: [id])
+  subject   Subject @relation(fields: [subjectId], references: [id])
+  cancellations TimeSlotCancellation[]
+
+  @@unique([classId, day, startTime])
+  @@index([classId])
+}
+
+model TimeSlotCancellation {
+  id          String   @id @default(cuid())
+  timeSlotId  String
+  date        DateTime
+  cancelledBy String
+  reason      String
+  timeSlot    TimeSlot @relation(fields: [timeSlotId], references: [id])
+  createdAt   DateTime @default(now())
+
+  @@unique([timeSlotId, date])
+  @@index([date])
+}
+
+model Lesson {
+  id          String   @id @default(cuid())
+  classId     String
+  subjectId   String
+  teacherId   String
+  title       String
+  description String?
+  objectives  String?
+  orderIndex  Int      @default(0)
+  class       Class    @relation(fields: [classId], references: [id])
+  subject     Subject  @relation(fields: [subjectId], references: [id])
+  assessmentLinks AssessmentLesson[]
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([teacherId, classId, subjectId])
+  @@index([classId, subjectId, orderIndex])
+}
+
+enum WeekDay {
+  Lundi
+  Mardi
+  Mercredi
+  Jeudi
+  Vendredi
+  Samedi
 }

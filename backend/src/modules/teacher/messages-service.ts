@@ -9,6 +9,18 @@ export class MessagesError extends Error {
   }
 }
 
+async function resolveStudentProfileId(studentId: string) {
+  if (!isPrismaEnabled()) return studentId;
+
+  const prisma = getPrismaClient();
+  const student = await prisma!.student.findFirst({
+    where: { OR: [{ id: studentId }, { userId: studentId }] },
+    select: { id: true },
+  });
+
+  return student?.id ?? null;
+}
+
 /**
  * Construit la liste des contacts (parents des élèves du professeur)
  * avec le dernier message de chaque fil.
@@ -17,8 +29,13 @@ export const messagesService = {
   async listContacts(teacherId: string) {
     if (isPrismaEnabled()) {
       const prisma = getPrismaClient() as any;
+      const teacherProfile = await prisma.teacher.findUnique({
+        where: { userId: teacherId },
+        select: { id: true },
+      });
+      const teacherIds = [teacherId, teacherProfile?.id].filter(Boolean);
       const messages = await prisma.message.findMany({
-        where: { teacherId },
+        where: { teacherId: { in: teacherIds } },
         orderBy: { createdAt: "desc" },
       });
 
@@ -28,13 +45,17 @@ export const messagesService = {
       const [parents, students] = await Promise.all([
         prisma.user.findMany({ where: { id: { in: parentIds } } }),
         prisma.student.findMany({
-          where: { id: { in: studentIds } },
+          where: { OR: [{ id: { in: studentIds } }, { userId: { in: studentIds } }] },
           include: { user: true },
         }),
       ]);
 
       const parentMap = new Map<string, any>(parents.map((item: any) => [item.id, item]));
-      const studentMap = new Map<string, any>(students.map((item: any) => [item.id, item]));
+      const studentMap = new Map<string, any>();
+      for (const student of students) {
+        studentMap.set(student.id, student);
+        studentMap.set(student.userId, student);
+      }
       const threadMap = new Map<string, typeof messages>();
 
       for (const message of messages) {
@@ -75,8 +96,6 @@ export const messagesService = {
     const teacherClasses = devStore.classes.filter((c) => c.teacherIds.includes(teacherId));
     const studentIds = teacherClasses.flatMap((c) => c.studentIds);
 
-    // parent_1 est lié à student_1 via le store (simplification dev)
-    // On construit un mapping studentId → parentUserId à partir des messages existants
     const parentStudentMap = new Map<string, string>(); // parentUserId → studentId (premier élève lié)
     for (const msg of devStore.messages) {
       if (msg.teacherId === teacherId && !parentStudentMap.has(msg.parentUserId)) {
@@ -84,12 +103,10 @@ export const messagesService = {
       }
     }
 
-    // Pour chaque étudiant sans parent dans les messages, on cherche un parent
-    // (Dans la démo: parent_1 est parent de student_1)
     for (const studentId of studentIds) {
-      // Heuristique dev: parent_1 → student_1 est la seule liaison connue
-      if (studentId === "student_1" && !parentStudentMap.has("parent_1")) {
-        parentStudentMap.set("parent_1", "student_1");
+      const link = devStore.parentStudentLinks.find((item) => item.studentId === studentId);
+      if (link && !parentStudentMap.has(link.parentUserId)) {
+        parentStudentMap.set(link.parentUserId, studentId);
       }
     }
 
@@ -125,17 +142,27 @@ export const messagesService = {
   async getThread(teacherId: string, studentId: string) {
     if (isPrismaEnabled()) {
       const prisma = getPrismaClient();
+      const teacherProfile = await prisma!.teacher.findUnique({
+        where: { userId: teacherId },
+        select: { id: true },
+      });
+      const teacherIds = [teacherId, teacherProfile?.id].filter(Boolean) as string[];
+      const studentProfileId = await resolveStudentProfileId(studentId);
+      const studentProfile = studentProfileId ? await prisma!.student.findUnique({
+        where: { id: studentProfileId },
+        include: { user: true },
+      }) : null;
       const [student, parentLink, thread] = await Promise.all([
-        prisma!.student.findUnique({
-          where: { id: studentId },
-          include: { user: true },
-        }),
+        Promise.resolve(studentProfile),
         prisma!.parentStudent.findFirst({
-          where: { studentId },
+          where: { studentId: studentProfile?.id ?? studentId },
           orderBy: [{ isPrimary: "desc" }],
         }),
         prisma!.message.findMany({
-          where: { teacherId, studentId },
+          where: {
+            teacherId: { in: teacherIds },
+            studentId: { in: [studentId, studentProfile?.id, studentProfile?.userId].filter(Boolean) as string[] },
+          },
           orderBy: { createdAt: "asc" },
         }),
       ]);
@@ -162,11 +189,12 @@ export const messagesService = {
     const student = devStore.users.find((u) => u.id === studentId);
     if (!student) throw new MessagesError("Élève introuvable.", 404);
 
-    // Trouver le parent lié à cet élève dans les messages existants
     const existingMsg = devStore.messages.find(
       (m) => m.teacherId === teacherId && m.studentId === studentId,
     );
-    const parentUserId = existingMsg?.parentUserId ?? (studentId === "student_1" ? "parent_1" : null);
+    const parentUserId = existingMsg?.parentUserId
+      ?? devStore.parentStudentLinks.find((item) => item.studentId === studentId)?.parentUserId
+      ?? null;
     if (!parentUserId) return { student, thread: [] };
 
     const parent = devStore.users.find((u) => u.id === parentUserId);
@@ -191,11 +219,14 @@ export const messagesService = {
   async sendMessage(teacherId: string, studentId: string, content: string) {
     if (isPrismaEnabled()) {
       const prisma = getPrismaClient();
-      const student = await prisma!.student.findUnique({ where: { id: studentId } });
+      const studentProfileId = await resolveStudentProfileId(studentId);
+      const student = studentProfileId
+        ? await prisma!.student.findUnique({ where: { id: studentProfileId } })
+        : null;
       if (!student) throw new MessagesError("Élève introuvable.", 404);
 
       const parentLink = await prisma!.parentStudent.findFirst({
-        where: { studentId },
+        where: { studentId: student.id },
         orderBy: [{ isPrimary: "desc" }],
       });
       if (!parentLink) throw new MessagesError("Aucun parent lié à cet élève.", 404);
@@ -221,11 +252,12 @@ export const messagesService = {
     const student = devStore.users.find((u) => u.id === studentId);
     if (!student) throw new MessagesError("Élève introuvable.", 404);
 
-    // Trouver le parent associé
     const existingMsg = devStore.messages.find(
       (m) => m.teacherId === teacherId && m.studentId === studentId,
     );
-    const parentUserId = existingMsg?.parentUserId ?? (studentId === "student_1" ? "parent_1" : null);
+    const parentUserId = existingMsg?.parentUserId
+      ?? devStore.parentStudentLinks.find((item) => item.studentId === studentId)?.parentUserId
+      ?? null;
     if (!parentUserId) throw new MessagesError("Aucun parent lié à cet élève.", 404);
 
     const created: DevMessage = {
@@ -244,10 +276,15 @@ export const messagesService = {
   async markThreadAsRead(teacherId: string, studentId: string) {
     if (isPrismaEnabled()) {
       const prisma = getPrismaClient();
+      const teacherProfile = await prisma!.teacher.findUnique({
+        where: { userId: teacherId },
+        select: { id: true },
+      });
+      const teacherIds = [teacherId, teacherProfile?.id].filter(Boolean) as string[];
       const result = await (prisma as any).message.updateMany({
         where: {
-          teacherId,
-          studentId,
+          teacherId: { in: teacherIds },
+          studentId: { in: [studentId, await resolveStudentProfileId(studentId)].filter(Boolean) },
           senderRole: "PARENT",
           teacherReadAt: null,
         },
@@ -300,10 +337,14 @@ export const messagesService = {
       if (!teacherId) {
         throw new MessagesError("Aucun enseignant lié à cet élève.", 404);
       }
+      const teacherProfile = await prisma!.teacher.findUnique({
+        where: { id: teacherId },
+        select: { userId: true },
+      });
 
       const created = await (prisma as any).message.create({
         data: {
-          teacherId,
+          teacherId: teacherProfile?.userId ?? teacherId,
           parentUserId: input.parentUserId,
           studentId: input.studentId,
           content: input.content.trim(),
@@ -313,7 +354,7 @@ export const messagesService = {
 
       return {
         id: created.id,
-        teacherId,
+        teacherId: created.teacherId,
         parentUserId: created.parentUserId,
         studentId: created.studentId,
         content: created.content,

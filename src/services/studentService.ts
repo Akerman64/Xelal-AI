@@ -77,6 +77,19 @@ export interface StudentRecommendation {
   createdAt: string;
 }
 
+export interface StudentScheduleSlot {
+  id: string;
+  classId: string;
+  className: string;
+  subjectId: string;
+  subjectName: string;
+  teacherName: string;
+  day: string;
+  startTime: string;
+  endTime: string;
+  room: string;
+}
+
 export interface StudentTutorAnswer {
   answer: string;
   source: 'ai' | 'fallback';
@@ -103,6 +116,14 @@ export const studentService = {
   async fetchRecommendations(session: AuthSession, studentId: string): Promise<StudentRecommendation[]> {
     const response = await request<{ data: StudentRecommendation[] }>(
       `/api/academics/students/${studentId}/recommendations`,
+      session,
+    );
+    return response.data;
+  },
+
+  async fetchSchedule(session: AuthSession, studentId: string): Promise<StudentScheduleSlot[]> {
+    const response = await request<{ data: StudentScheduleSlot[] }>(
+      `/api/student/${studentId}/schedule`,
       session,
     );
     return response.data;

@@ -33,6 +33,22 @@ const findAssessment = (assessmentId: string) =>
 
 const normalizePhone = (value: string) => value.replace(/[^\d+]/g, "");
 const digitsOnly = (value: string) => value.replace(/\D/g, "");
+const attendanceDateTime = (date: string, time?: string) =>
+  time ? new Date(`${date}T${time}:00`) : null;
+
+async function resolveStudentProfileId(studentId: string) {
+  if (!isPrismaEnabled()) return studentId;
+
+  const prisma = getPrismaClient();
+  const student = await prisma!.student.findFirst({
+    where: {
+      OR: [{ id: studentId }, { userId: studentId }],
+    },
+    select: { id: true },
+  });
+
+  return student?.id ?? null;
+}
 
 export const schoolRepository = {
   async listClasses() {
@@ -116,7 +132,7 @@ export const schoolRepository = {
       level: classRecord.level,
       students: classRecord.enrollments.map((enrollment) =>
         publicUser({
-          id: enrollment.student.id,
+          id: enrollment.student.user.id,
           schoolId: enrollment.student.user.schoolId,
           classId: classRecord.id,
           firstName: enrollment.student.user.firstName,
@@ -238,7 +254,7 @@ export const schoolRepository = {
 
     const prisma = getPrismaClient();
     const student = await prisma!.student.findUnique({
-      where: { id: studentId },
+      where: { id: (await resolveStudentProfileId(studentId)) ?? studentId },
       include: {
         user: true,
         grades: {
@@ -288,7 +304,7 @@ export const schoolRepository = {
 
     return {
       student: publicUser({
-        id: student.id,
+        id: student.user.id,
         schoolId: student.user.schoolId,
         classId: undefined,
         firstName: student.user.firstName,
@@ -381,7 +397,7 @@ export const schoolRepository = {
 
         return {
           student: publicUser({
-            id: enrollment.student.id,
+            id: enrollment.student.user.id,
             schoolId: enrollment.student.user.schoolId,
             classId,
             firstName: enrollment.student.user.firstName,
@@ -442,6 +458,7 @@ export const schoolRepository = {
     type: "QUIZ" | "HOMEWORK" | "EXAM" | "PROJECT";
     coefficient: number;
     date: string;
+    lessonIds?: string[];
   }) {
     if (!isPrismaEnabled()) {
       const classRecord = findClass(input.classId);
@@ -496,9 +513,15 @@ export const schoolRepository = {
         type: input.type as AssessmentType,
         coefficient: input.coefficient,
         date: new Date(input.date),
+        lessonLinks: input.lessonIds?.length
+          ? {
+              create: input.lessonIds.map((lessonId) => ({ lessonId })),
+            }
+          : undefined,
       },
       include: {
         subject: true,
+        lessonLinks: { include: { lesson: true } },
       },
     });
 
@@ -512,6 +535,11 @@ export const schoolRepository = {
       coefficient: assessment.coefficient,
       date: assessment.date.toISOString().slice(0, 10),
       subject: assessment.subject.name,
+      lessons: assessment.lessonLinks.map((link) => ({
+        id: link.lesson.id,
+        title: link.lesson.title,
+        orderIndex: link.lesson.orderIndex,
+      })),
     };
   },
 
@@ -556,13 +584,22 @@ export const schoolRepository = {
     }
 
     const prisma = getPrismaClient();
+    const normalizedEntries = [];
+    for (const entry of entries) {
+      const profileId = await resolveStudentProfileId(entry.studentId);
+      if (!profileId) {
+        continue;
+      }
+      normalizedEntries.push({ ...entry, studentId: profileId });
+    }
+
     const assessment = await prisma!.assessment.findUnique({ where: { id: assessmentId } });
     if (!assessment) {
       return null;
     }
 
     const grades = [];
-    for (const entry of entries) {
+    for (const entry of normalizedEntries) {
       const grade = await prisma!.grade.upsert({
         where: {
           assessmentId_studentId: {
@@ -634,7 +671,7 @@ export const schoolRepository = {
 
     const prisma = getPrismaClient();
     const student = await prisma!.student.findUnique({
-      where: { id: studentId },
+      where: { id: (await resolveStudentProfileId(studentId)) ?? studentId },
       include: {
         user: true,
         attendances: {
@@ -666,7 +703,7 @@ export const schoolRepository = {
 
     return {
       student: publicUser({
-        id: student.id,
+        id: student.user.id,
         schoolId: student.user.schoolId,
         classId: undefined,
         firstName: student.user.firstName,
@@ -761,6 +798,8 @@ export const schoolRepository = {
     teacherId: string;
     date: string;
     subjectId?: string;
+    startTime?: string;
+    endTime?: string;
     entries: Array<{
       studentId: string;
       status: "PRESENT" | "ABSENT" | "LATE";
@@ -778,7 +817,9 @@ export const schoolRepository = {
         (item) =>
           item.classId === input.classId &&
           item.date === input.date &&
-          item.subjectId === input.subjectId,
+          item.subjectId === input.subjectId &&
+          item.startTime === input.startTime &&
+          item.endTime === input.endTime,
       );
 
       if (!session) {
@@ -788,6 +829,8 @@ export const schoolRepository = {
           teacherId: input.teacherId,
           subjectId: input.subjectId,
           date: input.date,
+          startTime: input.startTime,
+          endTime: input.endTime,
         };
         devStore.attendanceSessions.push(session);
       }
@@ -829,11 +872,24 @@ export const schoolRepository = {
       return null;
     }
 
+    const normalizedEntries = [];
+    for (const entry of input.entries) {
+      const profileId = await resolveStudentProfileId(entry.studentId);
+      if (!profileId) {
+        continue;
+      }
+      normalizedEntries.push({ ...entry, studentId: profileId });
+    }
+
+    const startTime = attendanceDateTime(input.date, input.startTime);
+    const endTime = attendanceDateTime(input.date, input.endTime);
     let session = await prisma!.attendanceSession.findFirst({
       where: {
         classId: input.classId,
         subjectId: input.subjectId ?? null,
         date: new Date(input.date),
+        startTime,
+        endTime,
       },
     });
 
@@ -844,12 +900,14 @@ export const schoolRepository = {
           teacherId: input.teacherId,
           subjectId: input.subjectId,
           date: new Date(input.date),
+          startTime,
+          endTime,
         },
       });
     }
 
     const records = [];
-    for (const entry of input.entries) {
+    for (const entry of normalizedEntries) {
       const record = await prisma!.attendanceRecord.upsert({
         where: {
           sessionId_studentId: {
@@ -888,6 +946,8 @@ export const schoolRepository = {
         teacherId: session.teacherId,
         subjectId: session.subjectId ?? undefined,
         date: session.date.toISOString().slice(0, 10),
+        startTime: session.startTime?.toISOString().slice(11, 16),
+        endTime: session.endTime?.toISOString().slice(11, 16),
       } satisfies DevAttendanceSession,
       count: records.length,
       records,
@@ -935,11 +995,20 @@ export const schoolRepository = {
     }
 
     const prisma = getPrismaClient();
-    const parent = await prisma!.user.findFirst({
+    const parentCandidates = await prisma!.user.findMany({
       where: {
         role: "PARENT",
-        OR: [{ phone: raw }, { phone: `+${digits}` }, { phone: { endsWith: digits } }],
+        phone: { not: null },
       },
+    });
+    const parent = parentCandidates.find((candidate) => {
+      const candidateDigits = digitsOnly(candidate.phone ?? "");
+      return (
+        normalizePhone(candidate.phone ?? "") === raw ||
+        candidateDigits === digits ||
+        candidateDigits.endsWith(digits) ||
+        digits.endsWith(candidateDigits)
+      );
     });
 
     if (!parent) {
@@ -1109,6 +1178,7 @@ export const schoolRepository = {
           className: cls?.name ?? a.classId,
           subjectId: a.subjectId,
           subjectName: subject?.name ?? a.subjectId,
+          coefficient: a.coefficient ?? subject?.coefficientDefault ?? 1,
         };
       });
     }
@@ -1125,16 +1195,17 @@ export const schoolRepository = {
 
     return rows.map((row) => ({
       id: row.id,
-      teacherId: row.teacherId,
+      teacherId: row.teacher.userId, // User.id, pas Teacher.id
       teacherName: `${row.teacher.user.firstName} ${row.teacher.user.lastName}`,
       classId: row.classId,
       className: row.class.name,
       subjectId: row.subjectId,
       subjectName: row.subject.name,
+      coefficient: row.coefficient ?? row.subject.coefficientDefault,
     }));
   },
 
-  async createAssignment(input: { teacherId: string; classId: string; subjectId: string }) {
+  async createAssignment(input: { teacherId: string; classId: string; subjectId: string; coefficient?: number }) {
     if (!isPrismaEnabled()) {
       const duplicate = devStore.teacherAssignments.find(
         (a) =>
@@ -1168,12 +1239,27 @@ export const schoolRepository = {
         className: cls?.name ?? created.classId,
         subjectId: created.subjectId,
         subjectName: subject?.name ?? created.subjectId,
+        coefficient: created.coefficient ?? subject?.coefficientDefault ?? 1,
       };
     }
 
     const prisma = getPrismaClient();
+
+    // input.teacherId est le User.id — on résout le profil Teacher
+    const teacherProfile = await prisma!.teacher.findUnique({
+      where: { userId: input.teacherId },
+    });
+    if (!teacherProfile) {
+      throw new Error("Profil enseignant introuvable pour cet utilisateur.");
+    }
+
     const row = await prisma!.teacherAssignment.create({
-      data: input,
+      data: {
+        teacherId: teacherProfile.id,
+        classId: input.classId,
+        subjectId: input.subjectId,
+        coefficient: input.coefficient ?? null,
+      },
       include: {
         teacher: { include: { user: true } },
         class: true,
@@ -1183,12 +1269,13 @@ export const schoolRepository = {
 
     return {
       id: row.id,
-      teacherId: row.teacherId,
+      teacherId: row.teacher.userId,
       teacherName: `${row.teacher.user.firstName} ${row.teacher.user.lastName}`,
       classId: row.classId,
       className: row.class.name,
       subjectId: row.subjectId,
       subjectName: row.subject.name,
+      coefficient: row.coefficient ?? row.subject.coefficientDefault,
     };
   },
 
@@ -1237,8 +1324,36 @@ export const schoolRepository = {
         });
     }
 
-    // Prisma stub — implémentation à compléter avec la migration TimeSlot
-    return [];
+    const prisma = getPrismaClient();
+    const rows = await prisma!.timeSlot.findMany({
+      where: {
+        ...(filters?.classId ? { classId: filters.classId } : {}),
+        ...(filters?.teacherId ? { teacherId: filters.teacherId } : {}),
+      },
+      include: { class: true, subject: true, cancellations: true },
+      orderBy: [{ day: "asc" }, { startTime: "asc" }],
+    });
+
+    return rows.map((row) => ({
+      id: row.id,
+      classId: row.classId,
+      className: row.class.name,
+      subjectId: row.subjectId,
+      subjectName: row.subject.name,
+      teacherId: row.teacherId,
+      teacherName: row.teacherId, // résolu côté service si besoin
+      day: row.day as import("./dev-store").WeekDay,
+      startTime: row.startTime,
+      endTime: row.endTime,
+      room: row.room ?? null,
+      cancellations: row.cancellations.map((item) => ({
+        id: item.id,
+        date: item.date.toISOString().slice(0, 10),
+        reason: item.reason,
+        cancelledBy: item.cancelledBy,
+        createdAt: item.createdAt.toISOString(),
+      })),
+    }));
   },
 
   async createTimeSlot(input: {
@@ -1259,13 +1374,26 @@ export const schoolRepository = {
       if (!subject) throw new Error("Matière introuvable.");
       if (!teacher) throw new Error("Enseignant introuvable.");
 
-      const duplicate = devStore.timeSlots.find(
+      const classConflict = devStore.timeSlots.find(
         (s) =>
           s.classId === input.classId &&
           s.day === input.day &&
-          s.startTime === input.startTime,
+          s.startTime < input.endTime &&
+          s.endTime > input.startTime,
       );
-      if (duplicate) throw new Error("Un créneau existe déjà à ce jour et cette heure pour cette classe.");
+      if (classConflict) throw new Error("Un créneau existe déjà à ce jour et cette heure pour cette classe.");
+
+      const teacherConflict = devStore.timeSlots.find(
+        (s) =>
+          s.teacherId === input.teacherId &&
+          s.day === input.day &&
+          s.startTime < input.endTime &&
+          s.endTime > input.startTime,
+      );
+      if (teacherConflict) {
+        const conflictClass = devStore.classes.find((c) => c.id === teacherConflict.classId);
+        throw new Error(`Conflit : cet enseignant est déjà affecté à ${conflictClass?.name ?? teacherConflict.classId} à ce créneau.`);
+      }
 
       const created = {
         id: createId("ts"),
@@ -1295,7 +1423,71 @@ export const schoolRepository = {
       };
     }
 
-    throw new Error("Emploi du temps non disponible en mode Prisma pour l'instant.");
+    const prisma = getPrismaClient();
+
+    // Résoudre le profil Teacher depuis User.id
+    const teacherProfile = await prisma!.teacher.findUnique({ where: { userId: input.teacherId } });
+    if (!teacherProfile) throw new Error("Profil enseignant introuvable.");
+
+    const [cls, subject] = await Promise.all([
+      prisma!.class.findUnique({ where: { id: input.classId } }),
+      prisma!.subject.findUnique({ where: { id: input.subjectId } }),
+    ]);
+    if (!cls) throw new Error("Classe introuvable.");
+    if (!subject) throw new Error("Matière introuvable.");
+
+    const teacher = await prisma!.user.findUnique({ where: { id: input.teacherId } });
+
+    // Vérification conflit classe
+    const classConflictRow = await prisma!.timeSlot.findFirst({
+      where: {
+        classId: input.classId,
+        day: input.day as import("@prisma/client").WeekDay,
+        startTime: { lt: input.endTime },
+        endTime: { gt: input.startTime },
+      },
+    });
+    if (classConflictRow) throw new Error("Un créneau existe déjà à ce jour et cette heure pour cette classe.");
+
+    // Vérification conflit enseignant (toutes classes confondues)
+    const teacherConflictRow = await prisma!.timeSlot.findFirst({
+      where: {
+        teacherId: input.teacherId,
+        day: input.day as import("@prisma/client").WeekDay,
+        startTime: { lt: input.endTime },
+        endTime: { gt: input.startTime },
+      },
+      include: { class: true },
+    });
+    if (teacherConflictRow) {
+      throw new Error(`Conflit : cet enseignant est déjà affecté à ${teacherConflictRow.class.name} à ce créneau.`);
+    }
+
+    const row = await prisma!.timeSlot.create({
+      data: {
+        classId: input.classId,
+        subjectId: input.subjectId,
+        teacherId: input.teacherId,
+        day: input.day as import("@prisma/client").WeekDay,
+        startTime: input.startTime,
+        endTime: input.endTime,
+        room: input.room ?? null,
+      },
+    });
+
+    return {
+      id: row.id,
+      classId: cls.id,
+      className: cls.name,
+      subjectId: subject.id,
+      subjectName: subject.name,
+      teacherId: input.teacherId,
+      teacherName: teacher ? `${teacher.firstName} ${teacher.lastName}` : input.teacherId,
+      day: row.day as import("./dev-store").WeekDay,
+      startTime: row.startTime,
+      endTime: row.endTime,
+      room: row.room ?? null,
+    };
   },
 
   async deleteTimeSlot(slotId: string) {
@@ -1306,6 +1498,123 @@ export const schoolRepository = {
       return { id: slotId };
     }
 
-    throw new Error("Emploi du temps non disponible en mode Prisma pour l'instant.");
+    const prisma = getPrismaClient();
+    await prisma!.timeSlot.delete({ where: { id: slotId } });
+    return { id: slotId };
+  },
+
+  async cancelTimeSlot(input: { slotId: string; date: string; cancelledBy: string; reason: string }) {
+    if (!isPrismaEnabled()) {
+      return {
+        id: createId("slot_cancel"),
+        timeSlotId: input.slotId,
+        date: input.date,
+        cancelledBy: input.cancelledBy,
+        reason: input.reason,
+        createdAt: new Date().toISOString(),
+      };
+    }
+
+    const prisma = getPrismaClient();
+    const cancellation = await prisma!.timeSlotCancellation.upsert({
+      where: {
+        timeSlotId_date: {
+          timeSlotId: input.slotId,
+          date: new Date(input.date),
+        },
+      },
+      create: {
+        timeSlotId: input.slotId,
+        date: new Date(input.date),
+        cancelledBy: input.cancelledBy,
+        reason: input.reason,
+      },
+      update: {
+        cancelledBy: input.cancelledBy,
+        reason: input.reason,
+      },
+    });
+    return {
+      id: cancellation.id,
+      timeSlotId: cancellation.timeSlotId,
+      date: cancellation.date.toISOString().slice(0, 10),
+      cancelledBy: cancellation.cancelledBy,
+      reason: cancellation.reason,
+      createdAt: cancellation.createdAt.toISOString(),
+    };
+  },
+
+  async listEnrollments(classId?: string) {
+    if (!isPrismaEnabled()) {
+      return [];
+    }
+    const prisma = getPrismaClient();
+    const rows = await prisma!.studentEnrollment.findMany({
+      where: classId ? { classId } : undefined,
+      include: { student: { include: { user: true } }, class: true },
+      orderBy: { student: { user: { lastName: "asc" } } },
+    });
+    return rows.map((r) => ({
+      id: r.id,
+      studentId: r.student.userId,
+      studentName: `${r.student.user.firstName} ${r.student.user.lastName}`,
+      classId: r.classId,
+      className: r.class.name,
+      status: r.status,
+    }));
+  },
+
+  async createEnrollment(input: { studentId: string; classId: string }) {
+    if (!isPrismaEnabled()) {
+      throw new Error("Inscription non disponible en mode mémoire.");
+    }
+    const prisma = getPrismaClient();
+
+    const studentProfileId = await resolveStudentProfileId(input.studentId);
+    const studentProfile = studentProfileId
+      ? await prisma!.student.findUnique({ where: { id: studentProfileId } })
+      : null;
+    if (!studentProfile) throw new Error("Profil élève introuvable.");
+
+    const cls = await prisma!.class.findUnique({ where: { id: input.classId } });
+    if (!cls) throw new Error("Classe introuvable.");
+
+    const ay = await prisma!.academicYear.findFirst({ where: { isActive: true } });
+    if (!ay) throw new Error("Aucune année scolaire active.");
+
+    const existing = await prisma!.studentEnrollment.findFirst({
+      where: { studentId: studentProfile.id, classId: input.classId },
+    });
+    if (existing) throw new Error("L'élève est déjà inscrit dans cette classe.");
+
+    const enrollment = await prisma!.studentEnrollment.create({
+      data: {
+        studentId: studentProfile.id,
+        classId: input.classId,
+        academicYearId: ay.id,
+        status: "ACTIVE",
+      },
+      include: { student: { include: { user: true } }, class: true },
+    });
+
+    return {
+      id: enrollment.id,
+      studentId: enrollment.student.userId,
+      studentName: `${enrollment.student.user.firstName} ${enrollment.student.user.lastName}`,
+      classId: enrollment.classId,
+      className: enrollment.class.name,
+      status: enrollment.status,
+    };
+  },
+
+  async deleteEnrollment(enrollmentId: string) {
+    if (!isPrismaEnabled()) {
+      throw new Error("Non disponible en mode mémoire.");
+    }
+    const prisma = getPrismaClient();
+    const row = await prisma!.studentEnrollment.findUnique({ where: { id: enrollmentId } });
+    if (!row) throw new Error("Inscription introuvable.");
+    await prisma!.studentEnrollment.delete({ where: { id: enrollmentId } });
+    return { id: enrollmentId };
   },
 };

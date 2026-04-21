@@ -1,7 +1,9 @@
 import {
   AppRole,
   AppUserStatus,
+  createId,
   createInvitationCode,
+  devStore,
   publicInvitation,
   publicUser,
 } from "../core/dev-store";
@@ -10,9 +12,9 @@ import { schoolRepository } from "../core/school-repository";
 import { teacherService } from "../teacher/service";
 import { AnalysisType } from "@prisma/client";
 import { getPrismaClient, isPrismaEnabled } from "../../lib/prisma";
-import { GoogleGenAI } from "@google/genai";
-import { env } from "../../config/env";
+import { callAiJson, callAiText, isAiAvailable } from "../../lib/ai";
 import { whatsappService } from "../whatsapp/service";
+import { emailService } from "../email/service";
 
 export class AdminError extends Error {
   statusCode: number;
@@ -25,17 +27,6 @@ export class AdminError extends Error {
 
 const inSevenDays = () =>
   new Date(Date.now() + 7 * 24 * 60 * 60 * 1000).toISOString();
-
-let aiInstance: GoogleGenAI | null = null;
-
-const getAI = () => {
-  const apiKey = process.env.GEMINI_API_KEY || env.openAiApiKey;
-  if (!apiKey) return null;
-  if (!aiInstance) {
-    aiInstance = new GoogleGenAI({ apiKey });
-  }
-  return aiInstance;
-};
 
 const riskWeight = (value?: string) => {
   const normalized = String(value ?? "").toLowerCase();
@@ -52,6 +43,46 @@ const relationshipLabels = {
   FATHER: "Père",
   TUTOR: "Tuteur",
 } as const;
+
+async function buildParentWelcomeMessage(input: {
+  parentFirstName: string;
+  linkedStudentName: string;
+  childrenNames: string[];
+}) {
+  const fallback = [
+    `Bonjour ${input.parentFirstName}, votre compte parent est maintenant lié à ${input.linkedStudentName} sur Xelal AI.`,
+    "Vous pouvez m'écrire ici naturellement pour demander les notes, absences, retards, emploi du temps ou conseils de suivi.",
+    "Je répondrai uniquement avec les informations enregistrées par l'école.",
+  ].join("\n");
+
+  if (!isAiAvailable()) {
+    return fallback;
+  }
+
+  const reply = await callAiText(
+    [
+      {
+        role: "user",
+        content: [
+          `Parent: ${input.parentFirstName}`,
+          `Élève nouvellement lié: ${input.linkedStudentName}`,
+          `Tous les enfants suivis: ${input.childrenNames.join(", ")}`,
+          "Écris le message de bienvenue WhatsApp.",
+        ].join("\n"),
+      },
+    ],
+    [
+      "Tu écris un message WhatsApp de bienvenue pour un parent qui vient d'être lié à son enfant dans Xelal AI.",
+      "Le ton doit être humain, chaleureux, simple et naturel.",
+      "Maximum 3 phrases courtes.",
+      "Explique qu'il peut poser des questions naturellement sur les notes, absences, retards, emploi du temps ou conseils.",
+      "Précise que les réponses se basent uniquement sur les informations enregistrées par l'école.",
+      "Ne donne aucune note, absence, horaire ou performance dans ce message de bienvenue.",
+    ].join("\n"),
+  ).catch(() => null);
+
+  return reply?.trim() || fallback;
+}
 
 export const adminService = {
   async getOverview() {
@@ -99,16 +130,37 @@ export const adminService = {
     schoolId: string;
     firstName: string;
     lastName: string;
-    email: string;
+    email?: string;
     phone?: string;
     role: AppRole;
     classId?: string;
   }) {
-    const normalizedEmail = input.email.trim().toLowerCase();
-    const existingUser = await authAdminRepository.findUserByEmail(normalizedEmail);
+    const normalizedEmail = input.email?.trim().toLowerCase();
 
-    if (existingUser) {
-      throw new AdminError("Un utilisateur avec cet email existe deja.", 409);
+    if (normalizedEmail) {
+      const existingUser = await authAdminRepository.findUserByEmail(normalizedEmail);
+      if (existingUser) {
+        throw new AdminError("Un utilisateur avec cet email existe deja.", 409);
+      }
+    }
+
+    // Élève sans email : création directe en ACTIVE, pas d'invitation
+    if (input.role === "STUDENT" && !normalizedEmail) {
+      const user = await authAdminRepository.createUser({
+        schoolId: input.schoolId,
+        firstName: input.firstName,
+        lastName: input.lastName,
+        phone: input.phone,
+        role: input.role,
+        status: "ACTIVE",
+      });
+
+      return {
+        user: publicUser(user),
+        invitation: null,
+        emailDelivery: null,
+        whatsappDelivery: null,
+      };
     }
 
     const user = await authAdminRepository.createPendingUser({
@@ -116,7 +168,7 @@ export const adminService = {
       classId: input.classId,
       firstName: input.firstName,
       lastName: input.lastName,
-      email: normalizedEmail,
+      email: normalizedEmail!,
       phone: input.phone,
       role: input.role,
     });
@@ -128,19 +180,32 @@ export const adminService = {
       expiresAt: inSevenDays(),
     });
 
+    // Email en priorité, WhatsApp en fallback
+    let emailDelivery: { delivered: boolean; reason?: string } | null = null;
     let whatsappDelivery: { delivered: boolean; reason?: string } | null = null;
+
+    if (user.email) {
+      emailDelivery = await emailService.sendInvitation({
+        to: user.email,
+        firstName: user.firstName,
+        role: user.role,
+        code: invitation.code,
+        email: user.email,
+      });
+    }
+
     if (user.phone) {
-      const roleLabel = user.role === "TEACHER" ? "enseignant(e)" : user.role.toLowerCase();
+      const roleLabel = user.role === "TEACHER" ? "enseignant(e)" : user.role === "STUDENT" ? "élève" : user.role.toLowerCase();
       const message = [
         `Bonjour ${user.firstName},`,
         ``,
         `Vous avez été invité(e) sur Xelal AI en tant qu'${roleLabel}.`,
         ``,
         `Votre code d'activation : ${invitation.code}`,
-        `Email de connexion : ${user.email}`,
+        user.email ? `Email de connexion : ${user.email}` : "",
         ``,
-        `Ce code expire dans 7 jours. Connectez-vous sur l'application et entrez ce code pour activer votre compte.`,
-      ].join("\n");
+        `Ce code expire dans 7 jours.`,
+      ].filter(Boolean).join("\n");
 
       whatsappDelivery = await whatsappService.sendText(user.phone, message);
     }
@@ -151,6 +216,7 @@ export const adminService = {
         ...publicInvitation(invitation),
         code: invitation.code,
       },
+      emailDelivery,
       whatsappDelivery,
     };
   },
@@ -202,6 +268,100 @@ export const adminService = {
     } catch {
       throw new AdminError("Utilisateur introuvable.", 404);
     }
+  },
+
+  async deleteUser(userId: string, currentUserId?: string) {
+    if (userId === currentUserId) {
+      throw new AdminError("Vous ne pouvez pas supprimer votre propre compte.", 400);
+    }
+
+    if (!isPrismaEnabled()) {
+      const index = devStore.users.findIndex((user) => user.id === userId);
+      if (index === -1) throw new AdminError("Utilisateur introuvable.", 404);
+
+      devStore.users.splice(index, 1);
+      devStore.invitations = devStore.invitations.filter((invite) => invite.userId !== userId);
+      devStore.classes.forEach((classRecord) => {
+        classRecord.studentIds = classRecord.studentIds.filter((id) => id !== userId);
+        classRecord.teacherIds = classRecord.teacherIds.filter((id) => id !== userId);
+      });
+      devStore.teacherAssignments = devStore.teacherAssignments.filter((item) => item.teacherId !== userId);
+      devStore.parentStudentLinks = devStore.parentStudentLinks.filter(
+        (link) => link.parentUserId !== userId && link.studentId !== userId,
+      );
+      devStore.messages = devStore.messages.filter(
+        (message) =>
+          message.teacherId !== userId &&
+          message.parentUserId !== userId &&
+          message.studentId !== userId,
+      );
+      return { id: userId };
+    }
+
+    const prisma = getPrismaClient();
+    const user = await prisma!.user.findUnique({
+      where: { id: userId },
+      include: { studentProfile: true, teacherProfile: true },
+    });
+    if (!user) {
+      throw new AdminError("Utilisateur introuvable.", 404);
+    }
+
+    await prisma!.$transaction(async (tx) => {
+      await tx.invitation.deleteMany({ where: { userId } });
+
+      if (user.studentProfile) {
+        const studentId = user.studentProfile.id;
+        const attendanceRecords = await tx.attendanceRecord.findMany({
+          where: { studentId },
+          select: { sessionId: true },
+        });
+        const sessionIds = Array.from(new Set(attendanceRecords.map((record) => record.sessionId)));
+
+        await tx.message.deleteMany({ where: { studentId } });
+        await tx.teacherRecommendation.deleteMany({
+          where: { OR: [{ studentId }, { teacherId: userId }] },
+        });
+        await tx.aIAnalysis.deleteMany({ where: { studentId } });
+        await tx.parentStudent.deleteMany({ where: { studentId } });
+        await tx.grade.deleteMany({ where: { studentId } });
+        await tx.attendanceRecord.deleteMany({ where: { studentId } });
+        await tx.studentEnrollment.deleteMany({ where: { studentId } });
+        await tx.student.delete({ where: { id: studentId } });
+
+        for (const sessionId of sessionIds) {
+          const remaining = await tx.attendanceRecord.count({ where: { sessionId } });
+          if (remaining === 0) {
+            await tx.attendanceSession.delete({ where: { id: sessionId } }).catch(() => null);
+          }
+        }
+      }
+
+      if (user.teacherProfile) {
+        await tx.teacherAssignment.deleteMany({ where: { teacherId: user.teacherProfile.id } });
+        await tx.teacher.delete({ where: { id: user.teacherProfile.id } });
+      }
+
+      if (user.role === "PARENT") {
+        await tx.parentStudent.deleteMany({ where: { parentUserId: userId } });
+        await tx.message.deleteMany({ where: { parentUserId: userId } });
+      }
+
+      await tx.message.deleteMany({ where: { teacherId: userId } });
+      await tx.teacherRecommendation.deleteMany({ where: { teacherId: userId } });
+      const teacherSessions = await tx.attendanceSession.findMany({
+        where: { teacherId: userId },
+        select: { id: true },
+      });
+      await tx.attendanceRecord.deleteMany({
+        where: { sessionId: { in: teacherSessions.map((session) => session.id) } },
+      });
+      await tx.attendanceSession.deleteMany({ where: { teacherId: userId } });
+      await tx.timeSlot.deleteMany({ where: { teacherId: userId } });
+      await tx.user.delete({ where: { id: userId } });
+    });
+
+    return { id: userId };
   },
 
   async resendInvitation(invitationId: string) {
@@ -280,19 +440,22 @@ export const adminService = {
 
   async listParentStudentLinks() {
     if (!isPrismaEnabled()) {
-      return [
-        {
-          id: "memory_link_parent_1_student_1",
-          parentUserId: "parent_1",
-          parentName: "Fatou Diop",
-          parentPhone: "+221770000001",
-          studentId: "student_1",
-          studentName: "Moussa Diop",
-          relationship: "MOTHER",
-          relationshipLabel: relationshipLabels.MOTHER,
-          isPrimary: true,
-        },
-      ];
+      return devStore.parentStudentLinks.map((link) => {
+        const parent = devStore.users.find((u) => u.id === link.parentUserId);
+        const student = devStore.users.find((u) => u.id === link.studentId);
+        if (!parent || !student) return null;
+        return {
+          id: link.id,
+          parentUserId: link.parentUserId,
+          parentName: `${parent.firstName} ${parent.lastName}`,
+          parentPhone: parent.phone ?? undefined,
+          studentId: link.studentId,
+          studentName: `${student.firstName} ${student.lastName}`,
+          relationship: link.relationship,
+          relationshipLabel: relationshipLabels[link.relationship],
+          isPrimary: link.isPrimary,
+        };
+      }).filter(Boolean);
     }
 
     const prisma = getPrismaClient();
@@ -343,28 +506,50 @@ export const adminService = {
     isPrimary?: boolean;
   }) {
     if (!isPrismaEnabled()) {
-      if (input.parentUserId !== "parent_1" || input.studentId !== "student_1") {
-        throw new AdminError("Mode mémoire limité pour cette liaison.", 400);
+      const parent = devStore.users.find((u) => u.id === input.parentUserId && u.role === "PARENT");
+      if (!parent) throw new AdminError("Parent introuvable.", 404);
+
+      const student = devStore.users.find((u) => u.id === input.studentId && u.role === "STUDENT");
+      if (!student) throw new AdminError("Élève introuvable.", 404);
+
+      const existing = devStore.parentStudentLinks.find(
+        (l) => l.parentUserId === input.parentUserId && l.studentId === input.studentId,
+      );
+      if (existing) throw new AdminError("Ce parent est déjà rattaché à cet élève.", 409);
+
+      if (input.isPrimary) {
+        devStore.parentStudentLinks
+          .filter((l) => l.studentId === input.studentId)
+          .forEach((l) => { l.isPrimary = false; });
       }
 
-      return {
-        id: "memory_link_parent_1_student_1",
-        parentUserId: "parent_1",
-        parentName: "Fatou Diop",
-        parentPhone: "+221770000001",
-        studentId: "student_1",
-        studentName: "Moussa Diop",
+      const link = {
+        id: createId("link"),
+        parentUserId: input.parentUserId,
+        studentId: input.studentId,
         relationship: input.relationship,
-        relationshipLabel: relationshipLabels[input.relationship],
         isPrimary: input.isPrimary ?? true,
+      };
+      devStore.parentStudentLinks.push(link);
+
+      return {
+        id: link.id,
+        parentUserId: parent.id,
+        parentName: `${parent.firstName} ${parent.lastName}`,
+        parentPhone: parent.phone ?? undefined,
+        studentId: student.id,
+        studentName: `${student.firstName} ${student.lastName}`,
+        relationship: link.relationship,
+        relationshipLabel: relationshipLabels[link.relationship],
+        isPrimary: link.isPrimary,
       };
     }
 
     const prisma = getPrismaClient();
     const [parent, student] = await Promise.all([
       prisma!.user.findUnique({ where: { id: input.parentUserId } }),
-      prisma!.student.findUnique({
-        where: { id: input.studentId },
+      prisma!.student.findFirst({
+        where: { OR: [{ id: input.studentId }, { userId: input.studentId }] },
         include: { user: true },
       }),
     ]);
@@ -377,10 +562,13 @@ export const adminService = {
       throw new AdminError("Élève introuvable.", 404);
     }
 
+    // Utiliser le vrai Student.id pour toutes les opérations suivantes
+    const studentProfileId = student.id;
+
     const existing = await prisma!.parentStudent.findFirst({
       where: {
         parentUserId: input.parentUserId,
-        studentId: input.studentId,
+        studentId: studentProfileId,
       },
     });
 
@@ -390,7 +578,7 @@ export const adminService = {
 
     if (input.isPrimary) {
       await prisma!.parentStudent.updateMany({
-        where: { studentId: input.studentId, isPrimary: true },
+        where: { studentId: studentProfileId, isPrimary: true },
         data: { isPrimary: false },
       });
     }
@@ -398,7 +586,7 @@ export const adminService = {
     const created = await prisma!.parentStudent.create({
       data: {
         parentUserId: input.parentUserId,
-        studentId: input.studentId,
+        studentId: studentProfileId,
         relationship: input.relationship,
         isPrimary: Boolean(input.isPrimary),
       },
@@ -425,13 +613,22 @@ export const adminService = {
       | null = null;
 
     if (parent.phone) {
-      const message = [
-        `Bonjour ${parent.firstName}, vous êtes désormais enregistré(e) sur Xelal AI.`,
-        `Vous pouvez suivre: ${childrenNames.join(", ")}.`,
-        "Vous pouvez maintenant écrire sur WhatsApp: notes, absences, emploi du temps, conseils.",
-      ].join("\n");
+      const message = await buildParentWelcomeMessage({
+        parentFirstName: parent.firstName,
+        linkedStudentName: `${student.user.firstName} ${student.user.lastName}`,
+        childrenNames,
+      });
 
       welcomeDelivery = await whatsappService.sendText(parent.phone, message);
+      if (!welcomeDelivery.delivered) {
+        const templateDelivery = await whatsappService.sendTemplate(parent.phone, "hello_world", "en_US");
+        welcomeDelivery = {
+          ...templateDelivery,
+          reason: templateDelivery.delivered
+            ? "text_refused_template_sent"
+            : welcomeDelivery.reason,
+        };
+      }
     }
 
     return {
@@ -439,7 +636,7 @@ export const adminService = {
       parentUserId: parent.id,
       parentName: `${parent.firstName} ${parent.lastName}`,
       parentPhone: parent.phone ?? "",
-      studentId: student.id,
+      studentId: student.userId,
       studentName: `${student.user.firstName} ${student.user.lastName}`,
       relationship: created.relationship,
       relationshipLabel: relationshipLabels[created.relationship],
@@ -450,9 +647,9 @@ export const adminService = {
 
   async deleteParentStudentLink(linkId: string) {
     if (!isPrismaEnabled()) {
-      if (linkId !== "memory_link_parent_1_student_1") {
-        throw new AdminError("Liaison introuvable.", 404);
-      }
+      const idx = devStore.parentStudentLinks.findIndex((l) => l.id === linkId);
+      if (idx === -1) throw new AdminError("Liaison introuvable.", 404);
+      devStore.parentStudentLinks.splice(idx, 1);
       return { id: linkId };
     }
 
@@ -633,8 +830,7 @@ export const adminService = {
     let summary = `${classRecord.name} compte ${classSignals.studentsCount} élève(s) avec une moyenne de classe de ${classAverage ?? "N/A"}/20 et un taux d’absence de ${classSignals.absenceRate}%.`;
     let recommendations = fallbackRecommendations;
 
-    const ai = getAI();
-    if (ai) {
+    if (isAiAvailable()) {
       const prompt = `
 Tu es un conseiller académique pour une administration scolaire.
 Voici les données réelles de la classe ${classRecord.name}:
@@ -645,6 +841,12 @@ ${JSON.stringify({
   attendanceSessions: attendance.sessions,
 })}
 
+Règles obligatoires:
+- Tu ne dois jamais créer, deviner ou compléter une information.
+- Tu peux citer uniquement les notes, moyennes, tendances, absences, retards, classes, matières, élèves et données présentes dans les données réelles ci-dessus.
+- Si une information n'est pas disponible, écris "non disponible" ou explique que les données ne sont pas encore enregistrées.
+- Les recommandations, alertes, bulletins et rapports doivent être basés sur les valeurs de la base de données.
+
 Réponds en JSON strict:
 {
   "summary": string,
@@ -653,18 +855,13 @@ Réponds en JSON strict:
       `;
 
       try {
-        const response = await ai.models.generateContent({
-          model: "gemini-3-flash-preview",
-          contents: prompt,
-          config: { responseMimeType: "application/json" },
-        });
-        const parsed = JSON.parse(response.text || "{}");
+        const parsed = await callAiJson<{ summary?: string; recommendations?: unknown[] }>(prompt);
         if (typeof parsed.summary === "string" && parsed.summary.trim()) {
           summary = parsed.summary.trim();
         }
         if (Array.isArray(parsed.recommendations) && parsed.recommendations.length) {
           recommendations = parsed.recommendations
-            .filter((item: unknown) => typeof item === "string" && item.trim())
+            .filter((item: unknown): item is string => typeof item === "string" && item.trim().length > 0)
             .slice(0, 5);
         }
       } catch {
@@ -682,6 +879,208 @@ Réponds en JSON strict:
       studentsAtRisk: topStudents,
       recommendations,
     };
+  },
+
+  async getAcademicActivity() {
+    if (!isPrismaEnabled()) {
+      return { recentGrades: [], recentAttendance: [] };
+    }
+
+    const prisma = getPrismaClient();
+    const [grades, sessions] = await Promise.all([
+      prisma!.grade.findMany({
+        include: {
+          student: { include: { user: true } },
+          assessment: { include: { class: true, subject: true } },
+        },
+        orderBy: { updatedAt: "desc" },
+        take: 12,
+      }),
+      prisma!.attendanceSession.findMany({
+        include: {
+          class: true,
+          subject: true,
+          records: { include: { student: { include: { user: true } } } },
+        },
+        orderBy: { date: "desc" },
+        take: 12,
+      }),
+    ]);
+
+    return {
+      recentGrades: grades.map((grade) => ({
+        id: grade.id,
+        studentName: `${grade.student.user.firstName} ${grade.student.user.lastName}`,
+        className: grade.assessment.class.name,
+        subjectName: grade.assessment.subject.name,
+        assessmentTitle: grade.assessment.title,
+        value: grade.value,
+        updatedAt: grade.updatedAt.toISOString(),
+      })),
+      recentAttendance: sessions.map((session) => ({
+        id: session.id,
+        className: session.class.name,
+        subjectName: session.subject?.name ?? "Matière non renseignée",
+        date: session.date.toISOString().slice(0, 10),
+        present: session.records.filter((record) => record.status === "PRESENT").length,
+        absent: session.records.filter((record) => record.status === "ABSENT").length,
+        late: session.records.filter((record) => record.status === "LATE").length,
+        absentStudents: session.records
+          .filter((record) => record.status === "ABSENT" || record.status === "LATE")
+          .map((record) => ({
+            studentName: `${record.student.user.firstName} ${record.student.user.lastName}`,
+            status: record.status,
+            reason: record.reason ?? "",
+          })),
+      })),
+    };
+  },
+
+  async getAcademicStatistics() {
+    if (!isPrismaEnabled()) {
+      return { grades: [], teachers: [], lessons: [], recommendations: [] };
+    }
+
+    const prisma = getPrismaClient();
+    const [grades, teachers, lessons, studentRecommendations, classRecommendations] = await Promise.all([
+      prisma!.grade.findMany({
+        include: {
+          student: { include: { user: true, enrollments: { include: { class: true } } } },
+          assessment: {
+            include: {
+              class: true,
+              subject: true,
+              lessonLinks: { include: { lesson: true } },
+            },
+          },
+        },
+        orderBy: { updatedAt: "desc" },
+        take: 200,
+      }),
+      prisma!.teacher.findMany({
+        include: {
+          user: true,
+          assignments: { include: { class: true, subject: true } },
+        },
+        orderBy: { user: { lastName: "asc" } },
+      }),
+      prisma!.lesson.findMany({
+        include: { class: true, subject: true },
+        orderBy: [{ class: { name: "asc" } }, { orderIndex: "asc" }],
+        take: 200,
+      }),
+      prisma!.teacherRecommendation.findMany({
+        where: { scope: "STUDENT" },
+        include: { student: { include: { user: true } }, class: true },
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      }),
+      prisma!.teacherRecommendation.findMany({
+        where: { scope: "CLASS" },
+        include: { class: true },
+        orderBy: { createdAt: "desc" },
+        take: 100,
+      }),
+    ]);
+
+    const slots = await prisma!.timeSlot.findMany({
+      include: { subject: true },
+    });
+
+    const slotKey = (classId: string, subjectId: string) => `${classId}:${subjectId}`;
+    const slotMap = new Map<string, typeof slots>();
+    for (const slot of slots) {
+      const key = slotKey(slot.classId, slot.subjectId);
+      slotMap.set(key, [...(slotMap.get(key) ?? []), slot]);
+    }
+
+    return {
+      grades: grades.map((grade) => {
+        const classEnrollment = grade.student.enrollments.find((enrollment) => enrollment.classId === grade.assessment.classId);
+        const relatedSlots = slotMap.get(slotKey(grade.assessment.classId, grade.assessment.subjectId)) ?? [];
+        return {
+          id: grade.id,
+          value: grade.value,
+          comment: grade.comment ?? "",
+          updatedAt: grade.updatedAt.toISOString(),
+          studentId: grade.student.userId,
+          studentName: `${grade.student.user.firstName} ${grade.student.user.lastName}`,
+          classId: grade.assessment.classId,
+          className: classEnrollment?.class.name ?? grade.assessment.class.name,
+          subjectId: grade.assessment.subjectId,
+          subjectName: grade.assessment.subject.name,
+          teacherId: grade.assessment.teacherId,
+          assessmentId: grade.assessmentId,
+          assessmentTitle: grade.assessment.title,
+          assessmentType: grade.assessment.type,
+          assessmentDate: grade.assessment.date.toISOString().slice(0, 10),
+          coefficient: grade.assessment.coefficient,
+          lessons: grade.assessment.lessonLinks.map((link) => ({
+            id: link.lesson.id,
+            title: link.lesson.title,
+            orderIndex: link.lesson.orderIndex,
+          })),
+          timeSlots: relatedSlots.map((slot) => ({
+            id: slot.id,
+            day: slot.day,
+            startTime: slot.startTime,
+            endTime: slot.endTime,
+            room: slot.room ?? "",
+          })),
+        };
+      }),
+      teachers: teachers.map((teacher) => ({
+        id: teacher.userId,
+        name: `${teacher.user.firstName} ${teacher.user.lastName}`,
+        subjects: teacher.assignments.map((assignment) => ({
+          classId: assignment.classId,
+          className: assignment.class.name,
+          subjectId: assignment.subjectId,
+          subjectName: assignment.subject.name,
+          coefficient: assignment.coefficient ?? assignment.subject.coefficientDefault,
+        })),
+      })),
+      lessons: lessons.map((lesson) => ({
+        id: lesson.id,
+        title: lesson.title,
+        description: lesson.description ?? "",
+        objectives: lesson.objectives ?? "",
+        orderIndex: lesson.orderIndex,
+        classId: lesson.classId,
+        className: lesson.class.name,
+        subjectId: lesson.subjectId,
+        subjectName: lesson.subject.name,
+        teacherId: lesson.teacherId,
+      })),
+      recommendations: [
+        ...studentRecommendations.map((item) => ({
+          id: item.id,
+          scope: "STUDENT",
+          targetName: item.student ? `${item.student.user.firstName} ${item.student.user.lastName}` : "Élève",
+          className: item.class?.name ?? "",
+          riskLevel: item.riskLevel,
+          summary: item.summary,
+          createdAt: item.createdAt.toISOString(),
+        })),
+        ...classRecommendations.map((item) => ({
+          id: item.id,
+          scope: "CLASS",
+          targetName: item.class?.name ?? "Classe",
+          className: item.class?.name ?? "",
+          riskLevel: item.riskLevel,
+          summary: item.summary,
+          createdAt: item.createdAt.toISOString(),
+        })),
+      ].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+    };
+  },
+
+  async updateGrade(gradeId: string, input: { value: number; comment?: string }) {
+    const grade = await schoolRepository.updateGrade(gradeId, input.value, input.comment);
+    if (!grade) {
+      throw new AdminError("Note introuvable.", 404);
+    }
+    return grade;
   },
 
   async listTimeSlots(classId?: string) {
@@ -713,7 +1112,39 @@ Réponds en JSON strict:
     }
   },
 
-  async createAssignment(input: { teacherId: string; classId: string; subjectId: string }) {
+  async cancelTimeSlot(input: { slotId: string; date: string; cancelledBy: string; reason: string }) {
+    if (!input.reason.trim()) {
+      throw new AdminError("La justification est obligatoire.", 400);
+    }
+    try {
+      return await schoolRepository.cancelTimeSlot(input);
+    } catch {
+      throw new AdminError("Créneau introuvable ou annulation impossible.", 404);
+    }
+  },
+
+  async listEnrollments(classId?: string) {
+    return schoolRepository.listEnrollments(classId);
+  },
+
+  async createEnrollment(input: { studentId: string; classId: string }) {
+    try {
+      return await schoolRepository.createEnrollment(input);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "Inscription impossible.";
+      throw new AdminError(message, 409);
+    }
+  },
+
+  async deleteEnrollment(enrollmentId: string) {
+    try {
+      return await schoolRepository.deleteEnrollment(enrollmentId);
+    } catch {
+      throw new AdminError("Inscription introuvable.", 404);
+    }
+  },
+
+  async createAssignment(input: { teacherId: string; classId: string; subjectId: string; coefficient?: number }) {
     try {
       return await schoolRepository.createAssignment(input);
     } catch (error) {

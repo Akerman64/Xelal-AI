@@ -13,6 +13,18 @@ type ParentRecipient = {
 
 const normalizePhone = (value?: string) => (value ? value.replace(/\s+/g, "") : undefined);
 
+async function resolveStudentProfileId(studentId: string) {
+  if (!isPrismaEnabled()) return studentId;
+
+  const prisma = getPrismaClient();
+  const student = await prisma!.student.findFirst({
+    where: { OR: [{ id: studentId }, { userId: studentId }] },
+    select: { id: true },
+  });
+
+  return student?.id ?? studentId;
+}
+
 async function findParentRecipientsByStudentId(studentId: string): Promise<ParentRecipient[]> {
   if (!isPrismaEnabled()) {
     const student = devStore.users.find((user) => user.id === studentId && user.role === "STUDENT");
@@ -32,8 +44,9 @@ async function findParentRecipientsByStudentId(studentId: string): Promise<Paren
   }
 
   const prisma = getPrismaClient();
+  const studentProfileId = await resolveStudentProfileId(studentId);
   const links = await prisma!.parentStudent.findMany({
-    where: { studentId },
+    where: { studentId: studentProfileId },
     include: {
       student: {
         include: {
@@ -130,10 +143,14 @@ async function deliverToParents(studentId: string, message: string) {
     }
 
     const delivery = await whatsappService.sendText(parent.phone, message);
+    const finalDelivery = delivery.delivered
+      ? delivery
+      : await whatsappService.sendTemplate(parent.phone, "hello_world", "en_US");
     deliveries.push({
       parentId: parent.parentId,
       phone: parent.phone,
-      ...delivery,
+      ...finalDelivery,
+      reason: finalDelivery.delivered ? "text_refused_template_sent" : delivery.reason,
     });
   }
 

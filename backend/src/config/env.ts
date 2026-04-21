@@ -16,6 +16,8 @@ export const env = {
   whatsappVerifyToken: process.env.WHATSAPP_VERIFY_TOKEN ?? "",
   whatsappPhoneNumberId: process.env.WHATSAPP_PHONE_NUMBER_ID ?? "",
   whatsappAccessToken: process.env.WHATSAPP_ACCESS_TOKEN ?? "",
+  resendApiKey: process.env.RESEND_API_KEY ?? "",
+  emailFrom: process.env.EMAIL_FROM ?? "Xelal AI <noreply@xelal.ai>",
 };
 
 export const isProduction = env.nodeEnv === "production";

@@ -37,7 +37,7 @@ attendanceRouter.get("/classes/:classId", (req, res) => {
 attendanceRouter.post("/records/bulk", (req, res) => {
   Promise.resolve()
     .then(async () => {
-      const { classId, teacherId, date, subjectId, entries } = req.body ?? {};
+      const { classId, teacherId, date, subjectId, startTime, endTime, entries } = req.body ?? {};
 
       if (!classId || !teacherId || !date || !Array.isArray(entries) || !entries.length) {
         return res.status(400).json({
@@ -51,6 +51,8 @@ attendanceRouter.post("/records/bulk", (req, res) => {
           teacherId,
           date,
           subjectId,
+          startTime: typeof startTime === "string" ? startTime : undefined,
+          endTime: typeof endTime === "string" ? endTime : undefined,
           entries: entries.map((entry) => ({
             studentId: String(entry.studentId),
             status: String(entry.status) as "PRESENT" | "ABSENT" | "LATE",

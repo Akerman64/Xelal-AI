@@ -17,7 +17,6 @@ import {
   Filter,
   Download,
   CheckCircle2,
-  MoreVertical,
   BookOpen,
   Trash2,
   GraduationCap,
@@ -26,13 +25,15 @@ import {
   ChevronRight,
   Mail,
   Clock,
+  LogOut,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { AuthSession } from '../types';
-import { adminService, type AdminAssignmentRecord, type AdminClassRecord, type AdminClassReport, type AdminInvitationRecord, type AdminOverview, type AdminParentStudentLinkRecord, type AdminRecommendationStats, type AdminSubjectRecord, type AdminTimeSlotRecord, type AdminUserRecord, type WeekDay } from '../services/adminService';
+import { adminService, type AdminAcademicStatistics, type AdminAssignmentRecord, type AdminClassRecord, type AdminClassReport, type AdminInvitationRecord, type AdminOverview, type AdminParentStudentLinkRecord, type AdminRecommendationStats, type AdminSubjectRecord, type AdminTimeSlotRecord, type AdminUserRecord, type WeekDay } from '../services/adminService';
 
 interface DashboardAdminProps {
   session?: AuthSession;
+  onLogout?: () => void;
 }
 
 interface HeaderActionState {
@@ -54,8 +55,9 @@ const downloadJson = (filename: string, payload: unknown) => {
   URL.revokeObjectURL(url);
 };
 
-export default function DashboardAdmin({ session }: DashboardAdminProps) {
+export default function DashboardAdmin({ session, onLogout }: DashboardAdminProps) {
   const [selectedTab, setSelectedTab] = useState('établissement');
+  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
   const [overview, setOverview] = useState<AdminOverview | null>(null);
   const [overviewError, setOverviewError] = useState<string | null>(null);
   const [overviewVersion, setOverviewVersion] = useState(0);
@@ -99,37 +101,75 @@ export default function DashboardAdmin({ session }: DashboardAdminProps) {
     { id: 'établissement', icon: Building2, label: 'Établissement' },
     { id: 'statistiques', icon: BarChart3, label: 'Statistiques' },
     { id: 'utilisateurs', icon: Users, label: 'Utilisateurs' },
+    { id: 'inscriptions', icon: GraduationCap, label: 'Inscriptions' },
     { id: 'affectations', icon: BookOpen, label: 'Affectations' },
     { id: 'emploi-du-temps', icon: Clock, label: 'Emploi du temps' },
     { id: 'rapports', icon: FileText, label: 'Rapports' },
     { id: 'alertes', icon: ShieldAlert, label: 'Alertes' },
+    { id: 'analyse-ia', icon: Sparkles, label: 'Analyse IA' },
   ];
 
   return (
     <div className="flex h-screen bg-bg font-sans">
-      {/* Sidebar - Compact for Admin */}
-      <aside className="w-20 bg-primary flex flex-col items-center py-8 gap-10 shrink-0 border-r border-white/10 shadow-2xl">
-        <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center text-white font-bold text-xl ring-1 ring-white/20">E.</div>
-        <nav className="flex-1 flex flex-col gap-6">
+      <aside
+        onMouseEnter={() => setIsSidebarOpen(true)}
+        onMouseLeave={() => setIsSidebarOpen(false)}
+        className={`bg-primary flex flex-col py-8 gap-10 shrink-0 border-r border-white/10 shadow-2xl transition-[width] duration-300 ease-out ${
+          isSidebarOpen ? 'w-64 items-stretch px-5' : 'w-20 items-center px-0'
+        }`}
+      >
+        <div className={`flex items-center ${isSidebarOpen ? 'justify-start gap-3' : 'justify-center'}`}>
+          <div className="w-12 h-12 bg-white/10 rounded-2xl flex items-center justify-center text-white font-bold text-xl ring-1 ring-white/20 shrink-0">E.</div>
+          <div className={`overflow-hidden transition-all duration-300 ${isSidebarOpen ? 'w-36 opacity-100' : 'w-0 opacity-0'}`}>
+            <p className="text-sm font-extrabold text-white whitespace-nowrap">Xelal AI</p>
+            <p className="text-[10px] font-bold uppercase tracking-widest text-white/50 whitespace-nowrap">Administration</p>
+          </div>
+        </div>
+        <nav className={`flex-1 flex flex-col gap-3 ${isSidebarOpen ? 'items-stretch' : 'items-center'}`}>
           {navItems.map((item, i) => (
             <button 
               key={item.id} 
               onClick={() => setSelectedTab(item.id)}
-              className={`p-4 rounded-2xl transition-all relative group ${selectedTab === item.id ? 'bg-white/10 text-white shadow-lg' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
+              className={`relative flex h-14 items-center rounded-2xl transition-all group ${
+                isSidebarOpen ? 'w-full justify-start gap-3 px-4' : 'w-14 justify-center px-0'
+              } ${selectedTab === item.id ? 'bg-white/10 text-white shadow-lg' : 'text-white/50 hover:text-white hover:bg-white/5'}`}
             >
-              <item.icon size={22} strokeWidth={selectedTab === item.id ? 2.5 : 2} />
+              <item.icon size={22} strokeWidth={selectedTab === item.id ? 2.5 : 2} className="shrink-0" />
+              <span className={`overflow-hidden text-left text-sm font-bold whitespace-nowrap transition-all duration-300 ${
+                isSidebarOpen ? 'w-36 opacity-100' : 'w-0 opacity-0'
+              }`}>
+                {item.label}
+              </span>
               {selectedTab === item.id && (
                 <motion.div 
                   layoutId="active-pill"
                   className="absolute left-0 top-1/4 bottom-1/4 w-0.5 bg-accent rounded-full" 
                 />
               )}
-              <div className="absolute left-full ml-4 px-2 py-1 bg-ink text-white text-[10px] rounded opacity-0 group-hover:opacity-100 transition-opacity whitespace-nowrap z-50 pointer-events-none font-bold">
+              <div className={`absolute left-full ml-4 px-2 py-1 bg-ink text-white text-[10px] rounded transition-opacity whitespace-nowrap z-50 pointer-events-none font-bold ${
+                isSidebarOpen ? 'opacity-0' : 'opacity-0 group-hover:opacity-100'
+              }`}>
                 {item.label}
               </div>
             </button>
           ))}
         </nav>
+        {onLogout && (
+          <button
+            onClick={onLogout}
+            className={`relative flex h-14 items-center rounded-2xl text-white/60 transition-all hover:bg-white/5 hover:text-white ${
+              isSidebarOpen ? 'w-full justify-start gap-3 px-4' : 'w-14 justify-center px-0'
+            }`}
+            title="Déconnexion"
+          >
+            <LogOut size={22} className="shrink-0" />
+            <span className={`overflow-hidden text-left text-sm font-bold whitespace-nowrap transition-all duration-300 ${
+              isSidebarOpen ? 'w-36 opacity-100' : 'w-0 opacity-0'
+            }`}>
+              Déconnexion
+            </span>
+          </button>
+        )}
       </aside>
 
       <main className="flex-1 overflow-y-auto p-12">
@@ -191,6 +231,9 @@ export default function DashboardAdmin({ session }: DashboardAdminProps) {
                 onRegisterHeaderActions={setHeaderActions}
               />
             )}
+            {selectedTab === 'inscriptions' && (
+              <EnrollmentsView session={session} onRegisterHeaderActions={setHeaderActions} />
+            )}
             {selectedTab === 'affectations' && (
               <AssignmentsView session={session} onRegisterHeaderActions={setHeaderActions} />
             )}
@@ -209,6 +252,9 @@ export default function DashboardAdmin({ session }: DashboardAdminProps) {
                 onRegisterHeaderActions={setHeaderActions}
                 onNavigateTab={setSelectedTab}
               />
+            )}
+            {selectedTab === 'analyse-ia' && (
+              <AiAnalysisView session={session} onRegisterHeaderActions={setHeaderActions} />
             )}
           </motion.div>
         </AnimatePresence>
@@ -616,7 +662,14 @@ function StatisticsView({
   onNavigateTab?: (tab: string) => void;
 }) {
   const [stats, setStats] = useState<AdminRecommendationStats | null>(null);
+  const [academicStats, setAcademicStats] = useState<AdminAcademicStatistics | null>(null);
+  const [gradeDrafts, setGradeDrafts] = useState<Record<string, string>>({});
   const [error, setError] = useState<string | null>(null);
+  const [gradeFilter, setGradeFilter] = useState({ subject: '', teacher: '', class: '' });
+  const [detailPanel, setDetailPanel] = useState<{
+    type: 'teacher' | 'lesson' | 'recommendation' | 'grade';
+    data: any;
+  } | null>(null);
 
   useEffect(() => {
     let isMounted = true;
@@ -628,9 +681,13 @@ function StatisticsView({
       }
 
       try {
-        const nextStats = await adminService.fetchRecommendationStats(session);
+        const [nextStats, nextAcademicStats] = await Promise.all([
+          adminService.fetchRecommendationStats(session),
+          adminService.fetchAcademicStatistics(session),
+        ]);
         if (!isMounted) return;
         setStats(nextStats);
+        setAcademicStats(nextAcademicStats);
         setError(null);
       } catch (currentError) {
         if (!isMounted) return;
@@ -655,17 +712,31 @@ function StatisticsView({
       ]
     : [];
   const maxRiskValue = Math.max(...riskValues.map((item) => item.value), 1);
+  const updateAdminGrade = async (gradeId: string) => {
+    if (!session) return;
+    const draft = gradeDrafts[gradeId];
+    const value = Number(draft);
+    if (!Number.isFinite(value)) return;
+    await adminService.updateGrade(session, gradeId, { value });
+    const nextAcademicStats = await adminService.fetchAcademicStatistics(session);
+    setAcademicStats(nextAcademicStats);
+    setGradeDrafts((prev) => {
+      const copy = { ...prev };
+      delete copy[gradeId];
+      return copy;
+    });
+  };
 
   useEffect(() => {
     onRegisterHeaderActions?.({
       exportLabel: 'Exporter statistiques',
       quickActionLabel: 'Voir les rapports',
-      onExport: () => downloadJson(`xelal-statistiques-${new Date().toISOString().slice(0, 10)}.json`, stats),
+      onExport: () => downloadJson(`xelal-statistiques-${new Date().toISOString().slice(0, 10)}.json`, { stats, academicStats }),
       onQuickAction: () => onNavigateTab?.('rapports'),
     });
 
     return () => onRegisterHeaderActions?.({});
-  }, [stats, onRegisterHeaderActions, onNavigateTab]);
+  }, [stats, academicStats, onRegisterHeaderActions, onNavigateTab]);
 
   return (
     <div className="space-y-8">
@@ -744,6 +815,310 @@ function StatisticsView({
           ))}
         </div>
       </div>
+
+      <div className="polished-card p-8">
+        <div className="mb-6 flex flex-wrap items-center justify-between gap-4">
+          <div>
+            <h3 className="text-lg font-bold text-text-main">Notes, évaluations et leçons</h3>
+            <p className="mt-1 text-xs font-medium text-text-muted">Vue admin complète · Filtrez et cliquez sur n'importe quelle ligne pour le détail.</p>
+          </div>
+          <div className="flex flex-wrap gap-2">
+            <input
+              value={gradeFilter.subject}
+              onChange={(e) => setGradeFilter((f) => ({ ...f, subject: e.target.value }))}
+              placeholder="Matière…"
+              className="rounded-xl border border-border px-3 py-1.5 text-xs font-semibold outline-none focus:ring-1 focus:ring-primary w-32"
+            />
+            <input
+              value={gradeFilter.class}
+              onChange={(e) => setGradeFilter((f) => ({ ...f, class: e.target.value }))}
+              placeholder="Classe…"
+              className="rounded-xl border border-border px-3 py-1.5 text-xs font-semibold outline-none focus:ring-1 focus:ring-primary w-28"
+            />
+            <span className="rounded-full bg-primary/10 px-3 py-1.5 text-[10px] font-bold uppercase tracking-widest text-primary self-center">
+              {(academicStats?.grades ?? []).filter((g) =>
+                (!gradeFilter.subject || g.subjectName.toLowerCase().includes(gradeFilter.subject.toLowerCase())) &&
+                (!gradeFilter.class || g.className.toLowerCase().includes(gradeFilter.class.toLowerCase()))
+              ).length} note(s)
+            </span>
+          </div>
+        </div>
+        <div className="overflow-x-auto">
+          <table className="w-full min-w-[980px] text-left">
+            <thead>
+              <tr className="border-b border-border text-[10px] uppercase tracking-widest text-text-muted">
+                <th className="px-3 py-3">Élève</th>
+                <th className="px-3 py-3">Matière / éval</th>
+                <th className="px-3 py-3">Leçons</th>
+                <th className="px-3 py-3">Créneaux</th>
+                <th className="px-3 py-3 text-right">Note</th>
+              </tr>
+            </thead>
+            <tbody>
+              {(academicStats?.grades ?? [])
+                .filter((g) =>
+                  (!gradeFilter.subject || g.subjectName.toLowerCase().includes(gradeFilter.subject.toLowerCase())) &&
+                  (!gradeFilter.class || g.className.toLowerCase().includes(gradeFilter.class.toLowerCase()))
+                )
+                .map((grade) => (
+                <tr
+                  key={grade.id}
+                  className="border-b border-border/60 text-xs hover:bg-bg/60 cursor-pointer"
+                  onClick={() => setDetailPanel({ type: 'grade', data: grade })}
+                >
+                  <td className="px-3 py-4">
+                    <p className="font-bold text-text-main hover:text-primary">{grade.studentName}</p>
+                    <p className="mt-1 text-[10px] font-semibold text-text-muted">{grade.className}</p>
+                  </td>
+                  <td className="px-3 py-4">
+                    <p className="font-bold text-primary">{grade.subjectName}</p>
+                    <p className="mt-1 text-[10px] text-text-muted">{grade.assessmentTitle} · {grade.assessmentDate}</p>
+                  </td>
+                  <td className="px-3 py-4" onClick={(e) => e.stopPropagation()}>
+                    {grade.lessons.length ? grade.lessons.map((lesson) => (
+                      <button
+                        key={lesson.id}
+                        onClick={() => setDetailPanel({ type: 'lesson', data: { ...lesson, subjectName: grade.subjectName, className: grade.className } })}
+                        className="mr-2 mb-1 inline-flex rounded-full bg-bg border border-border px-2 py-1 text-[10px] font-bold text-text-muted hover:border-primary/30 hover:text-primary"
+                      >
+                        {lesson.orderIndex}. {lesson.title}
+                      </button>
+                    )) : <span className="text-[10px] text-text-muted">Non rattachée</span>}
+                  </td>
+                  <td className="px-3 py-4">
+                    {grade.timeSlots.length ? grade.timeSlots.map((slot) => (
+                      <span key={slot.id} className="mr-2 inline-flex rounded-full bg-success/10 px-2 py-1 text-[10px] font-bold text-success">
+                        {slot.day} {slot.startTime}–{slot.endTime}
+                      </span>
+                    )) : <span className="text-[10px] text-text-muted">Aucun créneau</span>}
+                  </td>
+                  <td className="px-3 py-4" onClick={(e) => e.stopPropagation()}>
+                    <div className="flex justify-end gap-2">
+                      <input
+                        type="number"
+                        min={0}
+                        max={20}
+                        step={0.25}
+                        value={gradeDrafts[grade.id] ?? String(grade.value)}
+                        onChange={(event) => setGradeDrafts((prev) => ({ ...prev, [grade.id]: event.target.value }))}
+                        className="w-20 rounded-xl border border-border px-2 py-2 text-right text-xs font-bold outline-none"
+                      />
+                      <button onClick={() => updateAdminGrade(grade.id)} className="rounded-xl bg-primary px-3 py-2 text-[10px] font-bold text-white">
+                        Modifier
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              ))}
+              {!academicStats?.grades.length && (
+                <tr>
+                  <td colSpan={5} className="px-3 py-8 text-center text-xs font-semibold text-text-muted">
+                    Aucune note enregistrée pour le moment.
+                  </td>
+                </tr>
+              )}
+            </tbody>
+          </table>
+        </div>
+      </div>
+
+      <div className="grid gap-6 lg:grid-cols-3">
+        <div className="polished-card p-6 lg:col-span-1">
+          <h3 className="text-sm font-bold text-text-main">Matières des enseignants</h3>
+          <div className="mt-4 space-y-3">
+            {(academicStats?.teachers ?? []).slice(0, 8).map((teacher) => (
+              <button
+                key={teacher.id}
+                onClick={() => setDetailPanel({ type: 'teacher', data: teacher })}
+                className="block w-full rounded-xl border border-border bg-white p-3 text-left hover:border-primary/30 hover:shadow-sm transition-all"
+              >
+                <p className="text-xs font-bold text-text-main">{teacher.name}</p>
+                <p className="mt-1 text-[10px] font-medium text-text-muted">
+                  {teacher.subjects.length} matière(s) · {teacher.subjects.map((s) => s.subjectName).join(', ') || 'Aucune'}
+                </p>
+              </button>
+            ))}
+            {!(academicStats?.teachers ?? []).length && <p className="text-xs text-text-muted">Aucun enseignant.</p>}
+          </div>
+        </div>
+        <div className="polished-card p-6 lg:col-span-1">
+          <h3 className="text-sm font-bold text-text-main">Leçons renseignées</h3>
+          <div className="mt-4 space-y-3">
+            {(academicStats?.lessons ?? []).slice(0, 8).map((lesson) => (
+              <button
+                key={lesson.id}
+                onClick={() => setDetailPanel({ type: 'lesson', data: lesson })}
+                className="block w-full rounded-xl border border-border bg-white p-3 text-left hover:border-primary/30 hover:shadow-sm transition-all"
+              >
+                <p className="text-xs font-bold text-text-main">{lesson.orderIndex}. {lesson.title}</p>
+                <p className="mt-1 text-[10px] font-medium text-text-muted">{lesson.subjectName} · {lesson.className}</p>
+              </button>
+            ))}
+            {!(academicStats?.lessons ?? []).length && <p className="text-xs text-text-muted">Aucune leçon renseignée.</p>}
+          </div>
+        </div>
+        <div className="polished-card p-6 lg:col-span-1">
+          <h3 className="text-sm font-bold text-text-main">Recommandations IA</h3>
+          <div className="mt-4 space-y-3">
+            {(academicStats?.recommendations ?? []).slice(0, 8).map((recommendation) => (
+              <button
+                key={recommendation.id}
+                onClick={() => setDetailPanel({ type: 'recommendation', data: recommendation })}
+                className="block w-full rounded-xl border border-border bg-white p-3 text-left hover:border-primary/30 hover:shadow-sm transition-all"
+              >
+                <div className="flex items-center gap-2 mb-1">
+                  <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded uppercase ${recommendation.riskLevel === 'critical' ? 'bg-danger/10 text-danger' : recommendation.riskLevel === 'high' ? 'bg-warning/10 text-warning' : 'bg-success/10 text-success'}`}>
+                    {recommendation.riskLevel ?? 'medium'}
+                  </span>
+                  <span className="text-[9px] text-text-muted font-bold uppercase">{recommendation.scope === 'CLASS' ? 'Classe' : 'Élève'}</span>
+                </div>
+                <p className="text-xs font-bold text-text-main">{recommendation.targetName}</p>
+                <p className="mt-1 line-clamp-2 text-[10px] font-medium text-text-muted">{recommendation.summary}</p>
+              </button>
+            ))}
+            {!(academicStats?.recommendations ?? []).length && <p className="text-xs text-text-muted">Aucune recommandation.</p>}
+          </div>
+        </div>
+      </div>
+
+      {/* Panel détail — slide-over */}
+      <AnimatePresence>
+        {detailPanel && (
+          <motion.div
+            className="fixed inset-0 z-50 flex justify-end bg-black/30"
+            initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+            onClick={() => setDetailPanel(null)}
+          >
+            <motion.div
+              className="relative h-full w-full max-w-md overflow-y-auto bg-white shadow-2xl p-6"
+              initial={{ x: '100%' }} animate={{ x: 0 }} exit={{ x: '100%' }}
+              transition={{ type: 'spring', damping: 28, stiffness: 280 }}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <button onClick={() => setDetailPanel(null)} className="absolute top-4 right-4 rounded-xl bg-bg border border-border p-2 text-text-muted hover:text-text-main">
+                <X size={16} />
+              </button>
+
+              {detailPanel.type === 'teacher' && (
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-1">Enseignant</p>
+                  <h3 className="text-lg font-bold text-text-main">{detailPanel.data.name}</h3>
+                  <div className="mt-6 space-y-3">
+                    {detailPanel.data.subjects.map((s: any, i: number) => (
+                      <div key={i} className="rounded-xl border border-border bg-bg p-4">
+                        <p className="text-xs font-bold text-primary">{s.subjectName}</p>
+                        <p className="text-[10px] text-text-muted font-medium mt-1">Classe : {s.className} · Coef. {s.coefficient}</p>
+                      </div>
+                    ))}
+                    {!detailPanel.data.subjects.length && <p className="text-xs text-text-muted">Aucune affectation.</p>}
+                  </div>
+                </div>
+              )}
+
+              {detailPanel.type === 'lesson' && (
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-1">Leçon</p>
+                  <h3 className="text-lg font-bold text-text-main">{detailPanel.data.orderIndex}. {detailPanel.data.title}</h3>
+                  <div className="mt-2 flex flex-wrap gap-2">
+                    <span className="rounded-full bg-primary/10 px-3 py-1 text-[10px] font-bold text-primary">{detailPanel.data.subjectName}</span>
+                    <span className="rounded-full bg-bg border border-border px-3 py-1 text-[10px] font-bold text-text-muted">{detailPanel.data.className}</span>
+                  </div>
+                  {detailPanel.data.description && (
+                    <div className="mt-6">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-2">Description</p>
+                      <p className="text-xs text-text-main leading-relaxed">{detailPanel.data.description}</p>
+                    </div>
+                  )}
+                  {detailPanel.data.objectives && (
+                    <div className="mt-4">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-2">Objectifs pédagogiques</p>
+                      <p className="text-xs text-text-main leading-relaxed">{detailPanel.data.objectives}</p>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {detailPanel.type === 'recommendation' && (
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-1">Recommandation IA</p>
+                  <h3 className="text-base font-bold text-text-main">{detailPanel.data.targetName}</h3>
+                  <p className="text-[10px] text-text-muted font-medium">{detailPanel.data.className} · {detailPanel.data.createdAt?.slice(0, 10)}</p>
+                  <div className="mt-4 rounded-xl bg-bg border border-border p-4">
+                    <p className="text-xs leading-relaxed text-text-main italic">{detailPanel.data.summary}</p>
+                  </div>
+                  {Array.isArray(detailPanel.data.recommendations) && (
+                    <div className="mt-4">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-2">Actions recommandées</p>
+                      <ul className="space-y-2">
+                        {detailPanel.data.recommendations.map((r: string, i: number) => (
+                          <li key={i} className="flex gap-2 text-xs text-text-main">
+                            <span className="text-primary font-bold">{i + 1}.</span> {r}
+                          </li>
+                        ))}
+                      </ul>
+                    </div>
+                  )}
+                </div>
+              )}
+
+              {detailPanel.type === 'grade' && (
+                <div>
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-1">Détail de la note</p>
+                  <h3 className="text-base font-bold text-text-main">{detailPanel.data.studentName}</h3>
+                  <p className="text-[10px] text-text-muted font-medium">{detailPanel.data.className}</p>
+                  <div className="mt-4 rounded-xl bg-bg border border-border p-4 space-y-3">
+                    <div className="flex justify-between">
+                      <span className="text-[10px] font-bold text-text-muted uppercase">Matière</span>
+                      <span className="text-xs font-bold text-primary">{detailPanel.data.subjectName}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-[10px] font-bold text-text-muted uppercase">Évaluation</span>
+                      <span className="text-xs font-bold text-text-main">{detailPanel.data.assessmentTitle}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-[10px] font-bold text-text-muted uppercase">Type</span>
+                      <span className="text-xs font-semibold text-text-muted">{detailPanel.data.assessmentType}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-[10px] font-bold text-text-muted uppercase">Date</span>
+                      <span className="text-xs font-semibold text-text-muted">{detailPanel.data.assessmentDate}</span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-[10px] font-bold text-text-muted uppercase">Coefficient</span>
+                      <span className="text-xs font-semibold text-text-muted">{detailPanel.data.coefficient}</span>
+                    </div>
+                    <div className="flex justify-between items-center border-t border-border pt-3">
+                      <span className="text-[10px] font-bold text-text-muted uppercase">Note</span>
+                      <span className="text-2xl font-extrabold text-primary">{detailPanel.data.value}<span className="text-sm font-bold text-text-muted">/20</span></span>
+                    </div>
+                  </div>
+                  {detailPanel.data.lessons.length > 0 && (
+                    <div className="mt-4">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-2">Leçons associées</p>
+                      {detailPanel.data.lessons.map((l: any) => (
+                        <div key={l.id} className="rounded-xl border border-border bg-bg p-3 mb-2">
+                          <p className="text-xs font-bold text-text-main">{l.orderIndex}. {l.title}</p>
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                  {detailPanel.data.timeSlots.length > 0 && (
+                    <div className="mt-4">
+                      <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-2">Créneaux horaires</p>
+                      {detailPanel.data.timeSlots.map((s: any) => (
+                        <div key={s.id} className="rounded-xl border border-success/20 bg-success/5 p-3 mb-2">
+                          <p className="text-xs font-bold text-success">{s.day} · {s.startTime}–{s.endTime}</p>
+                          {s.room && <p className="text-[10px] text-text-muted">Salle : {s.room}</p>}
+                        </div>
+                      ))}
+                    </div>
+                  )}
+                </div>
+              )}
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }
@@ -884,14 +1259,23 @@ function UsersManagementView({
         schoolId: 'school_xelal_1',
         firstName: inviteFirstName,
         lastName: inviteLastName,
-        email: inviteEmail,
+        email: inviteEmail || undefined,
         phone: invitePhone || undefined,
         role: inviteRole,
       });
 
       setUsers((prev) => [...prev, result.user]);
-      setInvitations((prev) => [result.invitation, ...prev]);
-      setSuccess(`Invitation créée. Code provisoire: ${result.invitation.code}`);
+      if (result.invitation) {
+        setInvitations((prev) => [result.invitation!, ...prev]);
+        const emailOk = result.emailDelivery?.delivered;
+        setSuccess(
+          emailOk
+            ? `Invitation envoyée par email à ${result.user.firstName}. Code : ${result.invitation.code}`
+            : `Invitation créée. Code provisoire : ${result.invitation.code}${!emailOk ? ' (email non envoyé — vérifiez RESEND_API_KEY)' : ''}`
+        );
+      } else {
+        setSuccess(`Élève ${result.user.firstName} ${result.user.lastName} créé sans compte email.`);
+      }
       setInviteEmail('');
       setInvitePhone('');
       setInviteFirstName('');
@@ -915,6 +1299,30 @@ function UsersManagementView({
       onDataChanged?.();
     } catch (currentError) {
       setError(currentError instanceof Error ? currentError.message : 'Mise à jour impossible.');
+    }
+  };
+
+  const handleDeleteUser = async (user: AdminUserRecord) => {
+    if (!session) return;
+    if (session.user.id === user.id) {
+      setError("Vous ne pouvez pas supprimer votre propre compte connecté.");
+      return;
+    }
+
+    const confirmed = window.confirm(
+      `Supprimer définitivement ${user.firstName} ${user.lastName} ? Cette action supprime aussi ses liens, affectations et inscriptions.`,
+    );
+    if (!confirmed) return;
+
+    setError(null);
+    setSuccess(null);
+    try {
+      await adminService.deleteUser(session, user.id);
+      setUsers((prev) => prev.filter((item) => item.id !== user.id));
+      setSuccess(`Utilisateur supprimé: ${user.firstName} ${user.lastName}`);
+      onDataChanged?.();
+    } catch (currentError) {
+      setError(currentError instanceof Error ? currentError.message : 'Suppression impossible.');
     }
   };
 
@@ -1005,8 +1413,24 @@ function UsersManagementView({
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <input value={inviteFirstName} onChange={(e) => setInviteFirstName(e.target.value)} placeholder="Prénom" className="px-4 py-3 bg-bg border border-border rounded-xl text-sm outline-none" />
             <input value={inviteLastName} onChange={(e) => setInviteLastName(e.target.value)} placeholder="Nom" className="px-4 py-3 bg-bg border border-border rounded-xl text-sm outline-none" />
-            <input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder={inviteRole === 'PARENT' ? 'Email (optionnel)' : 'email@ecole.com'} className="px-4 py-3 bg-bg border border-border rounded-xl text-sm outline-none md:col-span-2" />
-            <input value={invitePhone} onChange={(e) => setInvitePhone(e.target.value)} placeholder="+221 77 000 00 00" className="px-4 py-3 bg-bg border border-border rounded-xl text-sm outline-none" />
+            <input
+              value={inviteEmail}
+              onChange={(e) => setInviteEmail(e.target.value)}
+              placeholder={
+                inviteRole === 'STUDENT'
+                  ? 'Email (optionnel — peut être absent en primaire)'
+                  : inviteRole === 'PARENT'
+                  ? 'Email (optionnel)'
+                  : 'email@ecole.com *'
+              }
+              className="px-4 py-3 bg-bg border border-border rounded-xl text-sm outline-none md:col-span-2"
+            />
+            <input
+              value={invitePhone}
+              onChange={(e) => setInvitePhone(e.target.value)}
+              placeholder={inviteRole === 'STUDENT' ? 'Téléphone (optionnel)' : '+221 77 000 00 00'}
+              className="px-4 py-3 bg-bg border border-border rounded-xl text-sm outline-none"
+            />
             <select value={inviteRole} onChange={(e) => setInviteRole(e.target.value as 'TEACHER' | 'STUDENT' | 'PARENT' | 'ADMIN')} className="px-4 py-3 bg-bg border border-border rounded-xl text-sm outline-none">
               <option value="TEACHER">Enseignant</option>
               <option value="STUDENT">Élève</option>
@@ -1214,8 +1638,13 @@ function UsersManagementView({
                         Suspendre
                       </button>
                     )}
-                    <button className="p-2 hover:bg-bg rounded-lg transition-colors text-text-muted">
-                      <MoreVertical size={16} />
+                    <button
+                      onClick={() => handleDeleteUser(user)}
+                      disabled={session?.user.id === user.id}
+                      title={session?.user.id === user.id ? 'Impossible de supprimer le compte connecté' : 'Supprimer cet utilisateur'}
+                      className="p-2 rounded-lg text-danger transition-colors hover:bg-danger/10 disabled:cursor-not-allowed disabled:opacity-40"
+                    >
+                      <Trash2 size={16} />
                     </button>
                   </div>
                 </td>
@@ -1442,6 +1871,169 @@ function SubjectsManagerView({ session }: { session?: AuthSession }) {
   );
 }
 
+function EnrollmentsView({
+  session,
+  onRegisterHeaderActions,
+}: {
+  session?: AuthSession;
+  onRegisterHeaderActions?: (actions: HeaderActionState) => void;
+}) {
+  const [enrollments, setEnrollments] = useState<{ id: string; studentId: string; studentName: string; classId: string; className: string; status: string }[]>([]);
+  const [classes, setClasses] = useState<AdminClassRecord[]>([]);
+  const [students, setStudents] = useState<AdminUserRecord[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+  const [success, setSuccess] = useState<string | null>(null);
+  const [selStudent, setSelStudent] = useState('');
+  const [selClass, setSelClass] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
+
+  useEffect(() => {
+    let isMounted = true;
+    const load = async () => {
+      if (!session) { setIsLoading(false); return; }
+      setIsLoading(true);
+      try {
+        const [nextEnrollments, nextClasses, nextUsers] = await Promise.all([
+          adminService.fetchEnrollments(session),
+          adminService.fetchClasses(session),
+          adminService.fetchUsers(session),
+        ]);
+        if (!isMounted) return;
+        setEnrollments(nextEnrollments);
+        setClasses(nextClasses);
+        setStudents(nextUsers.filter((u) => u.role === 'student'));
+        setError(null);
+      } catch (e) {
+        if (!isMounted) return;
+        setError(e instanceof Error ? e.message : 'Chargement impossible.');
+      } finally {
+        if (isMounted) setIsLoading(false);
+      }
+    };
+    void load();
+    return () => { isMounted = false; };
+  }, [session]);
+
+  useEffect(() => {
+    onRegisterHeaderActions?.({
+      exportLabel: 'Exporter inscriptions',
+      quickActionLabel: 'Nouvelle inscription',
+      onExport: () => downloadJson(`xelal-inscriptions-${new Date().toISOString().slice(0, 10)}.json`, { enrollments }),
+      onQuickAction: () => document.getElementById('admin-enrollments-form')?.scrollIntoView({ behavior: 'smooth', block: 'start' }),
+    });
+    return () => onRegisterHeaderActions?.({});
+  }, [enrollments, onRegisterHeaderActions]);
+
+  const handleCreate = async () => {
+    if (!session || !selStudent || !selClass) return;
+    setIsSubmitting(true); setError(null); setSuccess(null);
+    try {
+      const created = await adminService.createEnrollment(session, { studentId: selStudent, classId: selClass });
+      setEnrollments((prev) => [...prev, created]);
+      setSuccess(`${created.studentName} inscrit(e) dans ${created.className}.`);
+      setSelStudent(''); setSelClass('');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Inscription impossible.');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
+
+  const handleDelete = async (enrollmentId: string) => {
+    if (!session) return;
+    setError(null); setSuccess(null);
+    try {
+      await adminService.deleteEnrollment(session, enrollmentId);
+      setEnrollments((prev) => prev.filter((e) => e.id !== enrollmentId));
+      setSuccess('Inscription supprimée.');
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Suppression impossible.');
+    }
+  };
+
+  // Grouper par classe
+  const byClass = useMemo(() => {
+    const map = new Map<string, { className: string; items: typeof enrollments }>();
+    for (const e of enrollments) {
+      const existing = map.get(e.classId) ?? { className: e.className, items: [] };
+      existing.items.push(e);
+      map.set(e.classId, existing);
+    }
+    return Array.from(map.values()).sort((a, b) => a.className.localeCompare(b.className));
+  }, [enrollments]);
+
+  return (
+    <div className="space-y-8">
+      <div id="admin-enrollments-form" className="bg-white p-6 rounded-2xl border border-border shadow-sm">
+        <h3 className="text-sm font-bold text-text-main mb-5">Inscrire un élève dans une classe</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+          <select value={selStudent} onChange={(e) => setSelStudent(e.target.value)} className="px-4 py-3 bg-bg border border-border rounded-xl text-sm outline-none">
+            <option value="">— Élève —</option>
+            {students.map((s) => <option key={s.id} value={s.id}>{s.firstName} {s.lastName}</option>)}
+          </select>
+          <select value={selClass} onChange={(e) => setSelClass(e.target.value)} className="px-4 py-3 bg-bg border border-border rounded-xl text-sm outline-none">
+            <option value="">— Classe —</option>
+            {classes.map((c) => <option key={c.id} value={c.id}>{c.name}</option>)}
+          </select>
+          <button onClick={handleCreate} disabled={!selStudent || !selClass || isSubmitting} className="px-4 py-3 bg-accent text-white rounded-xl font-bold text-sm shadow-lg shadow-blue-100 disabled:opacity-40 disabled:cursor-not-allowed">
+            {isSubmitting ? 'Inscription...' : 'Inscrire'}
+          </button>
+        </div>
+      </div>
+
+      {error && <div className="rounded-2xl border border-danger/20 bg-danger/5 px-4 py-3 text-sm font-semibold text-danger">{error}</div>}
+      {success && <div className="rounded-2xl border border-success/20 bg-success/5 px-4 py-3 text-sm font-semibold text-success">{success}</div>}
+
+      {isLoading && <div className="text-sm text-text-muted py-8 text-center">Chargement...</div>}
+
+      {!isLoading && byClass.length === 0 && (
+        <div className="bg-white rounded-2xl border border-border p-10 text-center text-text-muted text-sm">
+          Aucune inscription. Commencez par inscrire des élèves dans leurs classes.
+        </div>
+      )}
+
+      {!isLoading && byClass.map(({ className, items }) => (
+        <div key={className} className="polished-card overflow-hidden">
+          <div className="flex items-center gap-3 px-6 py-4 bg-bg/50 border-b border-border">
+            <div className="w-9 h-9 bg-primary-light text-primary rounded-xl flex items-center justify-center font-bold text-sm">
+              <GraduationCap size={18} />
+            </div>
+            <div>
+              <p className="text-sm font-bold text-text-main">{className}</p>
+              <p className="text-[10px] text-text-muted font-bold uppercase tracking-widest">{items.length} élève{items.length > 1 ? 's' : ''}</p>
+            </div>
+          </div>
+          <table className="w-full text-left">
+            <thead>
+              <tr className="border-b border-border">
+                <th className="px-6 py-3 text-xs font-bold text-text-muted uppercase tracking-wider">Élève</th>
+                <th className="px-6 py-3 text-xs font-bold text-text-muted uppercase tracking-wider text-center">Statut</th>
+                <th className="px-6 py-3 text-xs font-bold text-text-muted uppercase tracking-wider text-right">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-border">
+              {items.map((e) => (
+                <tr key={e.id} className="hover:bg-bg/20 transition-colors">
+                  <td className="px-6 py-3 text-sm font-semibold text-text-main">{e.studentName}</td>
+                  <td className="px-6 py-3 text-center">
+                    <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-success/10 text-success">{e.status}</span>
+                  </td>
+                  <td className="px-6 py-3 text-right">
+                    <button onClick={() => handleDelete(e.id)} className="p-2 hover:bg-danger/10 rounded-xl transition-colors text-danger/60 hover:text-danger" title="Retirer de la classe">
+                      <Trash2 size={15} />
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      ))}
+    </div>
+  );
+}
+
 function AssignmentsView({
   session,
   onRegisterHeaderActions,
@@ -1460,6 +2052,7 @@ function AssignmentsView({
   const [selTeacher, setSelTeacher] = useState('');
   const [selClass, setSelClass] = useState('');
   const [selSubject, setSelSubject] = useState('');
+  const [selCoef, setSelCoef] = useState('');
   const [isSubmitting, setIsSubmitting] = useState(false);
 
   useEffect(() => {
@@ -1511,16 +2104,19 @@ function AssignmentsView({
     setError(null);
     setSuccess(null);
     try {
+      const coef = selCoef !== '' ? Number(selCoef) : undefined;
       const created = await adminService.createAssignment(session, {
         teacherId: selTeacher,
         classId: selClass,
         subjectId: selSubject,
+        coefficient: coef && Number.isFinite(coef) && coef > 0 ? coef : undefined,
       });
       setAssignments((prev) => [...prev, created]);
-      setSuccess(`Affectation créée : ${created.teacherName} → ${created.className} / ${created.subjectName}`);
+      setSuccess(`Affectation créée : ${created.teacherName} → ${created.className} / ${created.subjectName} (coef. ${created.coefficient})`);
       setSelTeacher('');
       setSelClass('');
       setSelSubject('');
+      setSelCoef('');
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Affectation impossible.');
     } finally {
@@ -1557,7 +2153,7 @@ function AssignmentsView({
       {/* Formulaire d'ajout */}
       <div id="admin-assignments-form" className="bg-white p-6 rounded-2xl border border-border shadow-sm">
         <h3 className="text-sm font-bold text-text-main mb-5">Affecter un enseignant</h3>
-        <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+        <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
           <select
             value={selTeacher}
             onChange={(e) => setSelTeacher(e.target.value)}
@@ -1580,14 +2176,28 @@ function AssignmentsView({
           </select>
           <select
             value={selSubject}
-            onChange={(e) => setSelSubject(e.target.value)}
+            onChange={(e) => {
+              setSelSubject(e.target.value);
+              const s = subjects.find((s) => s.id === e.target.value);
+              if (s) setSelCoef(String(s.coefficientDefault));
+            }}
             className="px-4 py-3 bg-bg border border-border rounded-xl text-sm outline-none"
           >
             <option value="">— Matière —</option>
             {subjects.map((s) => (
-              <option key={s.id} value={s.id}>{s.name} (coef. {s.coefficientDefault})</option>
+              <option key={s.id} value={s.id}>{s.name}</option>
             ))}
           </select>
+          <input
+            type="number"
+            min="1"
+            max="20"
+            step="0.5"
+            value={selCoef}
+            onChange={(e) => setSelCoef(e.target.value)}
+            placeholder="Coef. (ex: 4)"
+            className="px-4 py-3 bg-bg border border-border rounded-xl text-sm outline-none"
+          />
           <button
             onClick={handleCreate}
             disabled={!selTeacher || !selClass || !selSubject || isSubmitting}
@@ -1630,6 +2240,7 @@ function AssignmentsView({
                   <tr className="border-b border-border">
                     <th className="px-6 py-3 text-xs font-bold text-text-muted uppercase tracking-wider">Classe</th>
                     <th className="px-6 py-3 text-xs font-bold text-text-muted uppercase tracking-wider">Matière</th>
+                    <th className="px-6 py-3 text-xs font-bold text-text-muted uppercase tracking-wider text-center">Coef.</th>
                     <th className="px-6 py-3 text-xs font-bold text-text-muted uppercase tracking-wider text-right">Action</th>
                   </tr>
                 </thead>
@@ -1642,6 +2253,11 @@ function AssignmentsView({
                       <td className="px-6 py-3">
                         <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-blue-50 text-blue-700">
                           {a.subjectName}
+                        </span>
+                      </td>
+                      <td className="px-6 py-3 text-center">
+                        <span className="px-2.5 py-1 rounded-full text-[10px] font-bold bg-primary/10 text-primary">
+                          {a.coefficient}
                         </span>
                       </td>
                       <td className="px-6 py-3 text-right">
@@ -1919,6 +2535,7 @@ function AlertsView({
   onNavigateTab?: (tab: string) => void;
 }) {
   const [alerts, setAlerts] = useState<Array<{ type: 'critical' | 'warning' | 'info'; title: string; time: string; desc: string }>>([]);
+  const [activity, setActivity] = useState<Awaited<ReturnType<typeof adminService.fetchAcademicActivity>> | null>(null);
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -1931,10 +2548,11 @@ function AlertsView({
       }
 
       try {
-        const [overview, classes, stats] = await Promise.all([
+        const [overview, classes, stats, nextActivity] = await Promise.all([
           adminService.fetchOverview(session),
           adminService.fetchClasses(session),
           adminService.fetchRecommendationStats(session),
+          adminService.fetchAcademicActivity(session),
         ]);
 
         if (!isMounted) return;
@@ -1977,6 +2595,7 @@ function AlertsView({
         });
 
         setAlerts(nextAlerts);
+        setActivity(nextActivity);
         setError(null);
       } catch (currentError) {
         if (!isMounted) return;
@@ -1994,7 +2613,7 @@ function AlertsView({
     onRegisterHeaderActions?.({
       exportLabel: 'Exporter alertes',
       quickActionLabel: 'Traiter les alertes',
-      onExport: () => downloadJson(`xelal-alertes-${new Date().toISOString().slice(0, 10)}.json`, alerts),
+      onExport: () => downloadJson(`xelal-alertes-${new Date().toISOString().slice(0, 10)}.json`, { alerts, activity }),
       onQuickAction: () => onNavigateTab?.('utilisateurs'),
     });
 
@@ -2027,6 +2646,41 @@ function AlertsView({
           </div>
         </div>
       ))}
+
+      <div className="grid gap-4 lg:grid-cols-2">
+        <div className="rounded-2xl border border-border bg-white p-5">
+          <h4 className="text-sm font-bold text-text-main">Dernières notes saisies</h4>
+          <div className="mt-4 space-y-3">
+            {(activity?.recentGrades ?? []).slice(0, 6).map((grade) => (
+              <div key={grade.id} className="rounded-xl bg-bg px-4 py-3">
+                <p className="text-xs font-bold text-text-main">{grade.studentName} • {grade.value}/20</p>
+                <p className="mt-1 text-[11px] text-text-muted">{grade.className} / {grade.subjectName} / {grade.assessmentTitle}</p>
+              </div>
+            ))}
+            {!activity?.recentGrades.length && <p className="text-xs text-text-muted">Aucune note récente.</p>}
+          </div>
+        </div>
+
+        <div className="rounded-2xl border border-border bg-white p-5">
+          <h4 className="text-sm font-bold text-text-main">Derniers appels</h4>
+          <div className="mt-4 space-y-3">
+            {(activity?.recentAttendance ?? []).slice(0, 6).map((session) => (
+              <div key={session.id} className="rounded-xl bg-bg px-4 py-3">
+                <p className="text-xs font-bold text-text-main">{session.className} • {session.subjectName} • {session.date}</p>
+                <p className="mt-1 text-[11px] text-text-muted">
+                  {session.present} présents / {session.absent} absents / {session.late} retards
+                </p>
+                {!!session.absentStudents.length && (
+                  <p className="mt-2 text-[10px] font-semibold text-danger">
+                    {session.absentStudents.map((item) => `${item.studentName} (${item.status})`).join(', ')}
+                  </p>
+                )}
+              </div>
+            ))}
+            {!activity?.recentAttendance.length && <p className="text-xs text-text-muted">Aucun appel récent.</p>}
+          </div>
+        </div>
+      </div>
     </div>
   );
 }
@@ -2074,6 +2728,10 @@ function ScheduleView({
   const [formRoom, setFormRoom] = useState('');
   const [saving, setSaving] = useState(false);
   const [formError, setFormError] = useState<string | null>(null);
+  const [cancelTarget, setCancelTarget] = useState<AdminTimeSlotRecord | null>(null);
+  const [cancelDate, setCancelDate] = useState(new Date().toISOString().slice(0, 10));
+  const [cancelReason, setCancelReason] = useState('');
+  const [cancelling, setCancelling] = useState(false);
 
   useEffect(() => {
     onRegisterHeaderActions({
@@ -2164,8 +2822,34 @@ function ScheduleView({
     try {
       await adminService.deleteTimeSlot(session, slotId);
       setSlots((prev) => prev.filter((s) => s.id !== slotId));
+      setCancelTarget(null);
+      setCancelReason('');
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Suppression impossible.');
+    }
+  };
+
+  const handleCancelConfirm = async () => {
+    if (!session || !cancelTarget || !cancelReason.trim()) return;
+    setCancelling(true);
+    try {
+      const cancellation = await adminService.cancelTimeSlot(session, cancelTarget.id, {
+        date: cancelDate,
+        reason: cancelReason.trim(),
+      });
+      setSlots((prev) =>
+        prev.map((slot) =>
+          slot.id === cancelTarget.id
+            ? { ...slot, cancellations: [...(slot.cancellations ?? []), cancellation] }
+            : slot,
+        ),
+      );
+      setCancelTarget(null);
+      setCancelReason('');
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Annulation impossible.');
+    } finally {
+      setCancelling(false);
     }
   };
 
@@ -2370,8 +3054,9 @@ function ScheduleView({
                     className={`rounded-xl border p-2.5 relative group ${slotColor(slot.subjectName)}`}
                   >
                     <button
-                      onClick={() => handleDelete(slot.id)}
+                      onClick={() => { setCancelTarget(slot); setCancelReason(''); }}
                       className="absolute top-1.5 right-1.5 opacity-0 group-hover:opacity-100 transition-opacity text-current/40 hover:text-red-500"
+                      title="Annuler ce créneau"
                     >
                       <X size={11} />
                     </button>
@@ -2403,6 +3088,295 @@ function ScheduleView({
           )}
         </>
       )}
+
+      {/* Modal annulation avec justification */}
+      <AnimatePresence>
+        {cancelTarget && (
+          <motion.div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/40 px-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+          >
+            <motion.div
+              className="w-full max-w-md rounded-2xl bg-white p-6 shadow-2xl"
+              initial={{ scale: 0.95, y: 20 }}
+              animate={{ scale: 1, y: 0 }}
+              exit={{ scale: 0.95, y: 20 }}
+            >
+              <h3 className="text-sm font-bold text-text-main">Annuler ce créneau</h3>
+              <div className="mt-2 rounded-xl bg-bg border border-border p-3">
+                <p className="text-xs font-bold text-text-main">{cancelTarget.subjectName} — {cancelTarget.day}</p>
+                <p className="text-[10px] text-text-muted font-medium">{cancelTarget.startTime}–{cancelTarget.endTime} · {cancelTarget.teacherName}</p>
+              </div>
+              <p className="mt-4 text-xs font-bold text-text-main">Motif d'annulation <span className="text-danger">*</span></p>
+              <input
+                type="date"
+                value={cancelDate}
+                onChange={(e) => setCancelDate(e.target.value)}
+                className="mt-2 w-full rounded-xl border border-border px-3 py-2 text-xs font-bold outline-none focus:ring-1 focus:ring-primary"
+              />
+              <textarea
+                rows={3}
+                value={cancelReason}
+                onChange={(e) => setCancelReason(e.target.value)}
+                placeholder="Ex : Absence de l'enseignant, jour férié, activité parascolaire…"
+                className="mt-2 w-full rounded-xl border border-border px-3 py-2 text-xs font-medium outline-none focus:ring-1 focus:ring-primary resize-none"
+              />
+              <div className="mt-4 flex justify-end gap-2">
+                <button
+                  onClick={() => setCancelTarget(null)}
+                  className="rounded-xl border border-border px-4 py-2 text-xs font-bold text-text-muted hover:bg-bg"
+                >
+                  Fermer
+                </button>
+                <button
+                  onClick={handleCancelConfirm}
+                  disabled={!cancelReason.trim() || cancelling}
+                  className="rounded-xl bg-danger px-4 py-2 text-xs font-bold text-white disabled:opacity-50"
+                >
+                  {cancelling ? 'Annulation…' : 'Confirmer l\'annulation'}
+                </button>
+              </div>
+            </motion.div>
+          </motion.div>
+        )}
+      </AnimatePresence>
+    </div>
+  );
+}
+
+function AiAnalysisView({
+  session,
+  onRegisterHeaderActions,
+}: {
+  session?: AuthSession;
+  onRegisterHeaderActions?: (actions: HeaderActionState) => void;
+}) {
+  const [classes, setClasses] = useState<AdminClassRecord[]>([]);
+  const [subjects, setSubjects] = useState<AdminSubjectRecord[]>([]);
+  const [enrollments, setEnrollments] = useState<{ id: string; studentId: string; studentName: string; classId: string; className: string; status: string }[]>([]);
+  const [selectedClassId, setSelectedClassId] = useState('');
+  const [selectedStudentId, setSelectedStudentId] = useState('');
+  const [selectedSubjectId, setSelectedSubjectId] = useState('');
+  const [extraPrompt, setExtraPrompt] = useState('');
+  const [isAnalyzing, setIsAnalyzing] = useState(false);
+  const [result, setResult] = useState<null | {
+    scope: 'student' | 'class';
+    summary: string;
+    riskLevel: 'low' | 'medium' | 'high' | 'critical';
+    recommendations: string[];
+    explanation: string;
+    subjectFilter?: string;
+    whatsappMessage?: string;
+    studentsAtRisk?: string[];
+  }>(null);
+  const [error, setError] = useState<string | null>(null);
+
+  useEffect(() => {
+    onRegisterHeaderActions?.({});
+  }, [onRegisterHeaderActions]);
+
+  useEffect(() => {
+    if (!session) return;
+    Promise.all([adminService.fetchClasses(session), adminService.fetchSubjects(session)])
+      .then(([c, s]) => { setClasses(c); setSubjects(s); })
+      .catch(() => {});
+  }, [session]);
+
+  useEffect(() => {
+    if (!session || !selectedClassId) { setEnrollments([]); setSelectedStudentId(''); return; }
+    adminService.fetchEnrollments(session, selectedClassId)
+      .then((e) => { setEnrollments(e); setSelectedStudentId(''); })
+      .catch(() => {});
+  }, [session, selectedClassId]);
+
+  const handleAnalyze = async () => {
+    if (!session || !selectedClassId) return;
+    setIsAnalyzing(true);
+    setResult(null);
+    setError(null);
+    try {
+      const selectedSubject = subjects.find((s) => s.id === selectedSubjectId);
+      const data = await adminService.analyzeAdmin(session, {
+        classId: selectedClassId,
+        studentId: selectedStudentId || undefined,
+        subjectId: selectedSubjectId || undefined,
+        subjectName: selectedSubject?.name,
+        extraPrompt: extraPrompt.trim() || undefined,
+      });
+      setResult(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Analyse impossible.');
+    } finally {
+      setIsAnalyzing(false);
+    }
+  };
+
+  const riskColors: Record<string, string> = {
+    low: 'bg-success/10 text-success border-success/20',
+    medium: 'bg-yellow-50 text-yellow-700 border-yellow-200',
+    high: 'bg-orange-50 text-orange-700 border-orange-200',
+    critical: 'bg-danger/10 text-danger border-danger/20',
+  };
+  const riskLabels: Record<string, string> = {
+    low: 'Faible', medium: 'Modéré', high: 'Élevé', critical: 'Critique',
+  };
+
+  return (
+    <div className="space-y-8">
+      <div className="bg-white rounded-2xl border border-border shadow-sm p-8">
+        <div className="flex items-center gap-3 mb-6">
+          <div className="w-10 h-10 bg-accent/10 rounded-xl flex items-center justify-center">
+            <Sparkles size={20} className="text-accent" />
+          </div>
+          <div>
+            <h2 className="text-base font-extrabold text-text-main">Analyse IA</h2>
+            <p className="text-xs text-text-muted font-medium">Générez une analyse pédagogique pour un élève ou une classe entière</p>
+          </div>
+        </div>
+
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-1.5 block">Classe <span className="text-danger">*</span></label>
+            <select
+              value={selectedClassId}
+              onChange={(e) => setSelectedClassId(e.target.value)}
+              className="w-full rounded-xl border border-border bg-bg px-3 py-2.5 text-sm font-semibold text-text-main outline-none focus:ring-1 focus:ring-accent"
+            >
+              <option value="">Sélectionner une classe…</option>
+              {classes.map((c) => (
+                <option key={c.id} value={c.id}>{c.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-1.5 block">
+              Élève <span className="text-text-muted font-medium normal-case text-[10px]">(optionnel — toute la classe si vide)</span>
+            </label>
+            <select
+              value={selectedStudentId}
+              onChange={(e) => setSelectedStudentId(e.target.value)}
+              disabled={!selectedClassId || enrollments.length === 0}
+              className="w-full rounded-xl border border-border bg-bg px-3 py-2.5 text-sm font-semibold text-text-main outline-none focus:ring-1 focus:ring-accent disabled:opacity-50"
+            >
+              <option value="">Toute la classe</option>
+              {enrollments.map((e) => (
+                <option key={e.studentId} value={e.studentId}>{e.studentName}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-1.5 block">
+              Matière <span className="text-text-muted font-medium normal-case text-[10px]">(optionnel — toutes les matières si vide)</span>
+            </label>
+            <select
+              value={selectedSubjectId}
+              onChange={(e) => setSelectedSubjectId(e.target.value)}
+              className="w-full rounded-xl border border-border bg-bg px-3 py-2.5 text-sm font-semibold text-text-main outline-none focus:ring-1 focus:ring-accent"
+            >
+              <option value="">Toutes les matières</option>
+              {subjects.map((s) => (
+                <option key={s.id} value={s.id}>{s.name}</option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-1.5 block">
+              Contexte supplémentaire <span className="text-text-muted font-medium normal-case text-[10px]">(optionnel)</span>
+            </label>
+            <input
+              type="text"
+              value={extraPrompt}
+              onChange={(e) => setExtraPrompt(e.target.value)}
+              placeholder="Ex : Préparer le conseil de classe du T2…"
+              className="w-full rounded-xl border border-border bg-bg px-3 py-2.5 text-sm font-medium text-text-main outline-none focus:ring-1 focus:ring-accent"
+            />
+          </div>
+        </div>
+
+        {error && (
+          <div className="mt-4 rounded-xl bg-danger/10 border border-danger/20 px-4 py-3 text-sm font-semibold text-danger">
+            {error}
+          </div>
+        )}
+
+        <div className="mt-6 flex justify-end">
+          <button
+            onClick={handleAnalyze}
+            disabled={!selectedClassId || isAnalyzing}
+            className="flex items-center gap-2 px-8 py-3 bg-accent text-white rounded-xl font-bold text-sm shadow-lg shadow-blue-100 hover:scale-[1.02] active:scale-95 transition-all disabled:opacity-50 disabled:cursor-not-allowed disabled:scale-100"
+          >
+            <Sparkles size={16} />
+            {isAnalyzing ? 'Analyse en cours…' : "Lancer l'analyse IA"}
+          </button>
+        </div>
+      </div>
+
+      <AnimatePresence>
+        {result && (
+          <motion.div
+            initial={{ opacity: 0, y: 12 }}
+            animate={{ opacity: 1, y: 0 }}
+            exit={{ opacity: 0, y: -12 }}
+            transition={{ duration: 0.25 }}
+            className="space-y-4"
+          >
+            <div className="bg-white rounded-2xl border border-border shadow-sm p-6 flex flex-col gap-4">
+              <div className="flex items-start justify-between gap-4">
+                <div className="flex-1">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-1">
+                    {result.scope === 'student' ? 'Analyse individuelle' : 'Analyse de classe'}
+                    {result.subjectFilter ? ` · ${result.subjectFilter}` : ''}
+                  </p>
+                  <p className="text-sm font-semibold text-text-main leading-relaxed">{result.summary}</p>
+                </div>
+                <span className={`shrink-0 rounded-xl border px-3 py-1.5 text-xs font-extrabold uppercase tracking-wider ${riskColors[result.riskLevel] ?? 'bg-bg text-text-muted border-border'}`}>
+                  {riskLabels[result.riskLevel] ?? result.riskLevel}
+                </span>
+              </div>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-border shadow-sm p-6">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-3">Analyse détaillée</p>
+              <p className="text-sm text-text-main font-medium leading-relaxed whitespace-pre-wrap">{result.explanation}</p>
+            </div>
+
+            <div className="bg-white rounded-2xl border border-border shadow-sm p-6">
+              <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-3">Recommandations</p>
+              <ul className="space-y-2">
+                {result.recommendations.map((rec, i) => (
+                  <li key={i} className="flex gap-3 items-start">
+                    <span className="mt-0.5 shrink-0 w-5 h-5 rounded-full bg-accent/10 text-accent text-[10px] font-extrabold flex items-center justify-center">{i + 1}</span>
+                    <span className="text-sm text-text-main font-medium">{rec}</span>
+                  </li>
+                ))}
+              </ul>
+            </div>
+
+            {result.studentsAtRisk && result.studentsAtRisk.length > 0 && (
+              <div className="bg-white rounded-2xl border border-danger/20 shadow-sm p-6">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-danger mb-3">Élèves nécessitant un suivi</p>
+                <div className="flex flex-wrap gap-2">
+                  {result.studentsAtRisk.map((name, i) => (
+                    <span key={i} className="rounded-xl bg-danger/10 text-danger text-xs font-bold px-3 py-1.5 border border-danger/20">{name}</span>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {result.whatsappMessage && (
+              <div className="bg-white rounded-2xl border border-border shadow-sm p-6">
+                <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted mb-3">Message WhatsApp parent</p>
+                <p className="text-sm text-text-main font-medium leading-relaxed whitespace-pre-wrap bg-bg rounded-xl border border-border p-4">{result.whatsappMessage}</p>
+              </div>
+            )}
+          </motion.div>
+        )}
+      </AnimatePresence>
     </div>
   );
 }

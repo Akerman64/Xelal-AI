@@ -22,6 +22,7 @@ import {
   ArrowRight,
   Search,
   Target,
+  LogOut,
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import { AuthSession } from '../types';
@@ -30,17 +31,20 @@ import {
   type StudentGradesData,
   type StudentAttendanceData,
   type StudentRecommendation,
+  type StudentScheduleSlot,
   type StudentTutorAnswer,
 } from '../services/studentService';
 
 interface DashboardEleveProps {
   session?: AuthSession;
+  onLogout?: () => void;
 }
 
-export default function DashboardEleve({ session }: DashboardEleveProps) {
+export default function DashboardEleve({ session, onLogout }: DashboardEleveProps) {
   const [selectedTab, setSelectedTab] = useState('dashboard');
   const [gradesData, setGradesData] = useState<StudentGradesData | null>(null);
   const [attendanceData, setAttendanceData] = useState<StudentAttendanceData | null>(null);
+  const [scheduleSlots, setScheduleSlots] = useState<StudentScheduleSlot[]>([]);
   const [recommendations, setRecommendations] = useState<StudentRecommendation[]>([]);
   const [tutorMessages, setTutorMessages] = useState<Array<{ role: 'student' | 'assistant'; content: string; meta?: string }>>([]);
   const [tutorQuestion, setTutorQuestion] = useState('');
@@ -61,15 +65,17 @@ export default function DashboardEleve({ session }: DashboardEleveProps) {
       if (!session) { setIsLoading(false); return; }
       setIsLoading(true);
       try {
-        const [grades, attendance, recs] = await Promise.all([
+        const [grades, attendance, recs, schedule] = await Promise.all([
           studentService.fetchGrades(session, session.user.id),
           studentService.fetchAttendance(session, session.user.id),
           studentService.fetchRecommendations(session, session.user.id).catch(() => []),
+          studentService.fetchSchedule(session, session.user.id).catch(() => []),
         ]);
         if (!isMounted) return;
         setGradesData(grades);
         setAttendanceData(attendance);
         setRecommendations(recs);
+        setScheduleSlots(schedule);
         setLoadError(null);
       } catch (e) {
         if (!isMounted) return;
@@ -104,6 +110,15 @@ export default function DashboardEleve({ session }: DashboardEleveProps) {
           </div>
         </div>
         <div className="flex items-center gap-4">
+          {onLogout && (
+            <button
+              onClick={onLogout}
+              className="hidden items-center gap-2 rounded-xl border border-border bg-bg px-3 py-2 text-xs font-bold text-text-main transition hover:bg-gray-100 sm:flex"
+            >
+              <LogOut size={14} />
+              Déconnexion
+            </button>
+          )}
           <button className="relative p-2 bg-bg border border-border rounded-xl hover:bg-gray-100 transition-all text-text-muted">
             <Bell size={18} />
             {(attendanceData?.summary.absent ?? 0) > 0 && (
@@ -138,7 +153,7 @@ export default function DashboardEleve({ session }: DashboardEleveProps) {
               <GradesView gradesData={gradesData} isLoading={isLoading} />
             )}
             {selectedTab === 'agenda' && (
-              <AgendaView attendanceData={attendanceData} isLoading={isLoading} />
+              <AgendaView attendanceData={attendanceData} scheduleSlots={scheduleSlots} isLoading={isLoading} />
             )}
             {selectedTab === 'ia' && (
               <IATutorView
@@ -190,6 +205,19 @@ export default function DashboardEleve({ session }: DashboardEleveProps) {
             </span>
           </button>
         ))}
+        {onLogout && (
+          <button
+            onClick={onLogout}
+            className="flex flex-col items-center gap-1.5 text-text-muted transition-all outline-none sm:hidden"
+          >
+            <div className="p-2 rounded-xl hover:bg-bg">
+              <LogOut size={20} />
+            </div>
+            <span className="text-[9px] font-bold uppercase tracking-widest opacity-0 scale-75">
+              Sortir
+            </span>
+          </button>
+        )}
       </nav>
     </div>
   );
@@ -394,7 +422,19 @@ function GradesView({ gradesData, isLoading }: { gradesData: StudentGradesData |
   );
 }
 
-function AgendaView({ attendanceData, isLoading }: { attendanceData: StudentAttendanceData | null; isLoading: boolean }) {
+const WEEK_DAYS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi', 'Samedi'];
+
+function AgendaView({
+  attendanceData,
+  scheduleSlots,
+  isLoading,
+}: {
+  attendanceData: StudentAttendanceData | null;
+  scheduleSlots: StudentScheduleSlot[];
+  isLoading: boolean;
+}) {
+  const [activeTab, setActiveTab] = React.useState<'schedule' | 'attendance'>('schedule');
+
   if (isLoading) {
     return (
       <div className="space-y-3">
@@ -409,66 +449,123 @@ function AgendaView({ attendanceData, isLoading }: { attendanceData: StudentAtte
   const records = attendanceData?.records ?? [];
   const absences = records.filter((r) => r.status === 'ABSENT' || r.status === 'LATE');
 
+  // Grouper les créneaux par jour
+  const slotsByDay = WEEK_DAYS.reduce<Record<string, StudentScheduleSlot[]>>((acc, day) => {
+    acc[day] = scheduleSlots.filter((s) => s.day === day).sort((a, b) => a.startTime.localeCompare(b.startTime));
+    return acc;
+  }, {});
+  const activeDays = WEEK_DAYS.filter((d) => slotsByDay[d].length > 0);
+
   return (
-    <div className="space-y-8">
-      {/* Résumé absences */}
-      <div className="polished-card p-6 bg-white">
-        <h3 className="text-xs font-bold text-text-main uppercase tracking-wider mb-6">Absences & Retards</h3>
-        <div className="grid grid-cols-3 gap-4">
-          <div className="p-4 bg-success/5 rounded-2xl border border-success/10">
-            <p className="text-[9px] font-bold text-success uppercase tracking-widest mb-1">Présences</p>
-            <p className="text-2xl font-mono font-extrabold text-success">{String(summary?.present ?? 0).padStart(2, '0')}</p>
-          </div>
-          <div className="p-4 bg-danger/5 rounded-2xl border border-danger/10">
-            <p className="text-[9px] font-bold text-danger uppercase tracking-widest mb-1">Absences</p>
-            <p className="text-2xl font-mono font-extrabold text-danger">{String(summary?.absent ?? 0).padStart(2, '0')}</p>
-          </div>
-          <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100">
-            <p className="text-[9px] font-bold text-amber-600 uppercase tracking-widest mb-1">Retards</p>
-            <p className="text-2xl font-mono font-extrabold text-amber-600">{String(summary?.late ?? 0).padStart(2, '0')}</p>
-          </div>
-        </div>
+    <div className="space-y-6">
+      {/* Toggle Schedule / Absences */}
+      <div className="flex gap-2 rounded-2xl bg-bg border border-border p-1">
+        <button
+          onClick={() => setActiveTab('schedule')}
+          className={`flex-1 rounded-xl py-2 text-xs font-bold transition-all ${activeTab === 'schedule' ? 'bg-white shadow-sm text-primary' : 'text-text-muted'}`}
+        >
+          Emploi du temps
+        </button>
+        <button
+          onClick={() => setActiveTab('attendance')}
+          className={`flex-1 rounded-xl py-2 text-xs font-bold transition-all ${activeTab === 'attendance' ? 'bg-white shadow-sm text-primary' : 'text-text-muted'}`}
+        >
+          Absences & Retards
+        </button>
       </div>
 
-      {/* Détail des absences / retards */}
-      {absences.length > 0 && (
-        <section>
-          <h3 className="text-xs font-bold text-text-main uppercase tracking-wider mb-4">Détail</h3>
-          <div className="space-y-3">
-            {absences.map((record) => (
-              <div
-                key={record.id}
-                className={`polished-card p-5 bg-white border-l-4 flex gap-5 ${record.status === 'ABSENT' ? 'border-l-danger' : 'border-l-amber-400'}`}
-              >
-                <div className="flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center bg-bg border border-border">
-                  {record.status === 'ABSENT' ? (
-                    <XCircle size={18} className="text-danger" />
-                  ) : (
-                    <Clock size={18} className="text-amber-500" />
-                  )}
+      {activeTab === 'schedule' && (
+        <div className="space-y-4">
+          {activeDays.length === 0 ? (
+            <div className="polished-card p-8 text-center">
+              <CalendarDays size={32} className="text-text-muted mx-auto mb-3" />
+              <p className="text-sm font-bold text-text-main">Emploi du temps non encore défini</p>
+              <p className="mt-1 text-xs text-text-muted">L'admin de l'école doit créer les créneaux.</p>
+            </div>
+          ) : (
+            activeDays.map((day) => (
+              <div key={day} className="polished-card bg-white overflow-hidden">
+                <div className="px-5 py-3 border-b border-border">
+                  <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted">{day}</p>
                 </div>
-                <div className="flex-1">
-                  <div className="flex items-center gap-2 mb-1">
-                    <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded uppercase tracking-tighter ${record.status === 'ABSENT' ? 'bg-danger/10 text-danger' : 'bg-amber-100 text-amber-600'}`}>
-                      {record.status === 'ABSENT' ? 'Absent' : `Retard${record.minutesLate ? ` (${record.minutesLate} min)` : ''}`}
-                    </span>
-                  </div>
-                  <p className="text-sm font-bold text-text-main">{record.subject ?? 'Cours'}</p>
-                  <p className="text-[10px] text-text-muted font-bold font-mono uppercase mt-1">{record.date ?? '—'}</p>
-                  {record.reason && (
-                    <p className="text-[10px] text-text-muted mt-1 italic">Motif : {record.reason}</p>
-                  )}
+                <div className="divide-y divide-border">
+                  {slotsByDay[day].map((slot) => (
+                    <div key={slot.id} className="flex items-center gap-4 px-5 py-4">
+                      <div className="flex-shrink-0 text-center w-14">
+                        <p className="text-xs font-mono font-bold text-primary">{slot.startTime}</p>
+                        <p className="text-[9px] font-mono text-text-muted">{slot.endTime}</p>
+                      </div>
+                      <div className="w-px h-8 bg-border" />
+                      <div className="flex-1">
+                        <p className="text-sm font-bold text-text-main">{slot.subjectName}</p>
+                        <p className="text-[10px] text-text-muted font-medium">
+                          {slot.teacherName ? `Prof : ${slot.teacherName}` : ''}
+                          {slot.room ? ` · Salle ${slot.room}` : ''}
+                        </p>
+                      </div>
+                      {slot.room && (
+                        <span className="rounded-lg bg-primary/10 px-2 py-1 text-[9px] font-bold text-primary">
+                          {slot.room}
+                        </span>
+                      )}
+                    </div>
+                  ))}
                 </div>
               </div>
-            ))}
-          </div>
-        </section>
+            ))
+          )}
+        </div>
       )}
 
-      {absences.length === 0 && !isLoading && (
-        <div className="polished-card p-8 text-center">
-          <CheckCircle2 size={32} className="text-success mx-auto mb-3" />
-          <p className="text-sm font-bold text-text-main">Aucune absence enregistrée</p>
+      {activeTab === 'attendance' && (
+        <div className="space-y-6">
+          {/* Résumé absences */}
+          <div className="polished-card p-6 bg-white">
+            <div className="grid grid-cols-3 gap-4">
+              <div className="p-4 bg-success/5 rounded-2xl border border-success/10">
+                <p className="text-[9px] font-bold text-success uppercase tracking-widest mb-1">Présences</p>
+                <p className="text-2xl font-mono font-extrabold text-success">{String(summary?.present ?? 0).padStart(2, '0')}</p>
+              </div>
+              <div className="p-4 bg-danger/5 rounded-2xl border border-danger/10">
+                <p className="text-[9px] font-bold text-danger uppercase tracking-widest mb-1">Absences</p>
+                <p className="text-2xl font-mono font-extrabold text-danger">{String(summary?.absent ?? 0).padStart(2, '0')}</p>
+              </div>
+              <div className="p-4 bg-amber-50 rounded-2xl border border-amber-100">
+                <p className="text-[9px] font-bold text-amber-600 uppercase tracking-widest mb-1">Retards</p>
+                <p className="text-2xl font-mono font-extrabold text-amber-600">{String(summary?.late ?? 0).padStart(2, '0')}</p>
+              </div>
+            </div>
+          </div>
+
+          {absences.length > 0 ? (
+            <div className="space-y-3">
+              {absences.map((record) => (
+                <div
+                  key={record.id}
+                  className={`polished-card p-5 bg-white border-l-4 flex gap-5 ${record.status === 'ABSENT' ? 'border-l-danger' : 'border-l-amber-400'}`}
+                >
+                  <div className="flex-shrink-0 w-10 h-10 rounded-xl flex items-center justify-center bg-bg border border-border">
+                    {record.status === 'ABSENT' ? <XCircle size={18} className="text-danger" /> : <Clock size={18} className="text-amber-500" />}
+                  </div>
+                  <div className="flex-1">
+                    <div className="flex items-center gap-2 mb-1">
+                      <span className={`text-[8px] font-bold px-1.5 py-0.5 rounded uppercase tracking-tighter ${record.status === 'ABSENT' ? 'bg-danger/10 text-danger' : 'bg-amber-100 text-amber-600'}`}>
+                        {record.status === 'ABSENT' ? 'Absent' : `Retard${record.minutesLate ? ` (${record.minutesLate} min)` : ''}`}
+                      </span>
+                    </div>
+                    <p className="text-sm font-bold text-text-main">{record.subject ?? 'Cours'}</p>
+                    <p className="text-[10px] text-text-muted font-bold font-mono uppercase mt-1">{record.date ?? '—'}</p>
+                    {record.reason && <p className="text-[10px] text-text-muted mt-1 italic">Motif : {record.reason}</p>}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <div className="polished-card p-8 text-center">
+              <CheckCircle2 size={32} className="text-success mx-auto mb-3" />
+              <p className="text-sm font-bold text-text-main">Aucune absence enregistrée</p>
+            </div>
+          )}
         </div>
       )}
     </div>

@@ -36,3 +36,28 @@ studentRouter.post("/ai/ask", (req: AuthenticatedRequest, res) => {
       return res.status(statusCode).json({ error: message });
     });
 });
+
+// Emploi du temps de l'étudiant (créneaux de sa classe)
+studentRouter.get("/:studentId/schedule", (req: AuthenticatedRequest, res) => {
+  Promise.resolve()
+    .then(async () => {
+      const currentUser = req.currentUser;
+      if (!currentUser) return res.status(401).json({ error: "Session invalide." });
+
+      const { studentId } = req.params;
+
+      // Un élève ne peut voir que son propre emploi du temps
+      if (currentUser.role === "STUDENT" && studentId !== currentUser.id) {
+        return res.status(403).json({ error: "Accès non autorisé." });
+      }
+
+      return res.status(200).json({
+        data: await studentService.getSchedule(studentId),
+      });
+    })
+    .catch((error) => {
+      const statusCode = error instanceof StudentError ? error.statusCode : 400;
+      const message = error instanceof Error ? error.message : "Lecture impossible.";
+      return res.status(statusCode).json({ error: message });
+    });
+});

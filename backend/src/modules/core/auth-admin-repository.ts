@@ -166,6 +166,14 @@ export const authAdminRepository = {
         mustChangePassword: false,
       },
     });
+
+    // Créer le profil métier automatiquement
+    if (input.role === "STUDENT") {
+      await prisma!.student.create({ data: { userId: user.id } });
+    } else if (input.role === "TEACHER") {
+      await prisma!.teacher.create({ data: { userId: user.id } });
+    }
+
     return toAppUser(user);
   },
 
@@ -206,6 +214,14 @@ export const authAdminRepository = {
         mustChangePassword: false,
       },
     });
+
+    // Créer le profil métier automatiquement
+    if (input.role === "STUDENT") {
+      await prisma!.student.create({ data: { userId: user.id } });
+    } else if (input.role === "TEACHER") {
+      await prisma!.teacher.create({ data: { userId: user.id } });
+    }
+
     return toAppUser(user);
   },
 

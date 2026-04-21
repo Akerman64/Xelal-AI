@@ -42,11 +42,19 @@ interface ApiClassGradebookRow {
 
 interface ApiAssessment {
   id: string;
+  classId?: string;
+  subjectId?: string;
   title: string;
   type: string;
   coefficient: number;
   date: string;
   subject: string;
+}
+
+export interface ApiSubject {
+  id: string;
+  name: string;
+  coefficientDefault: number;
 }
 
 interface ApiStudentGradesResponse {
@@ -139,6 +147,26 @@ export interface TeacherWorkspaceData {
   upcomingLessons: TeacherLesson[];
   weeklySchedule: TeacherLesson[];
   quickContacts: TeacherQuickContact[];
+}
+
+export interface TeacherAssignment {
+  classId: string;
+  className: string;
+  subjectId: string;
+  subjectName: string;
+}
+
+export interface TeacherCourseLesson {
+  id: string;
+  classId: string;
+  className?: string;
+  subjectId: string;
+  subjectName?: string;
+  title: string;
+  description?: string;
+  objectives?: string;
+  orderIndex: number;
+  createdAt: string;
 }
 
 export interface TeacherRecommendationRecord {
@@ -355,6 +383,109 @@ export const fetchTeacherWorkspaceData = async (session: AuthSession) => {
   return response.data;
 };
 
+export const fetchTeacherSubjects = async (): Promise<ApiSubject[]> => {
+  const session = authService.getStoredSession();
+  if (!session) {
+    throw new Error('Session introuvable.');
+  }
+
+  const response = await request<{ data: ApiSubject[] }>(
+    '/api/academics/subjects',
+    session.accessToken,
+  );
+
+  return response.data;
+};
+
+export const fetchTeacherAssignments = async (): Promise<TeacherAssignment[]> => {
+  const session = authService.getStoredSession();
+  if (!session) throw new Error('Session introuvable.');
+  const response = await request<{ data: TeacherAssignment[] }>(
+    '/api/teacher/assignments',
+    session.accessToken,
+  );
+  return response.data;
+};
+
+export const fetchTeacherLessons = async (): Promise<TeacherCourseLesson[]> => {
+  const session = authService.getStoredSession();
+  if (!session) throw new Error('Session introuvable.');
+  const response = await request<{ data: TeacherCourseLesson[] }>(
+    '/api/teacher/lessons',
+    session.accessToken,
+  );
+  return response.data;
+};
+
+export const createTeacherLesson = async (input: {
+  classId: string;
+  subjectId: string;
+  title: string;
+  description?: string;
+  objectives?: string;
+  orderIndex?: number;
+}) => {
+  const session = authService.getStoredSession();
+  if (!session) throw new Error('Session introuvable.');
+  const response = await request<{ data: TeacherCourseLesson }>(
+    '/api/teacher/lessons',
+    session.accessToken,
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  );
+  return response.data;
+};
+
+export const createTeacherAssessment = async (input: {
+  classId: string;
+  subjectId: string;
+  teacherId: string;
+  title: string;
+  type: 'QUIZ' | 'HOMEWORK' | 'EXAM' | 'PROJECT';
+  coefficient: number;
+  date: string;
+  lessonIds?: string[];
+}) => {
+  const session = authService.getStoredSession();
+  if (!session) {
+    throw new Error('Session introuvable.');
+  }
+
+  const response = await request<{ data: ApiAssessment }>(
+    '/api/academics/assessments',
+    session.accessToken,
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  );
+
+  return response.data;
+};
+
+export const bulkSaveTeacherGrades = async (
+  assessmentId: string,
+  entries: Array<{ studentId: string; value: number; comment?: string }>,
+) => {
+  const session = authService.getStoredSession();
+  if (!session) {
+    throw new Error('Session introuvable.');
+  }
+
+  const response = await request<{ data: { count: number } }>(
+    '/api/academics/grades/bulk',
+    session.accessToken,
+    {
+      method: 'POST',
+      body: JSON.stringify({ assessmentId, entries }),
+    },
+  );
+
+  return response.data;
+};
+
 export const fetchTeacherRecommendations = async (studentId: string) => {
   const session = authService.getStoredSession();
   if (!session) {
@@ -510,6 +641,9 @@ export const saveTeacherAttendance = async (input: {
   classId: string;
   teacherId: string;
   date: string;
+  subjectId?: string;
+  startTime?: string;
+  endTime?: string;
   entries: Array<{
     studentId: string;
     status: 'PRESENT' | 'ABSENT' | 'LATE';
@@ -522,7 +656,16 @@ export const saveTeacherAttendance = async (input: {
     throw new Error('Session introuvable.');
   }
 
-  const response = await request<{ data: unknown }>(
+  const response = await request<{
+    data: {
+      notificationsSent?: number;
+      notifications?: Array<{
+        studentName: string;
+        sent: number;
+        deliveries?: Array<{ phone?: string; delivered: boolean; reason?: string }>;
+      }>;
+    };
+  }>(
     '/api/attendance/records/bulk',
     session.accessToken,
     {
@@ -531,5 +674,24 @@ export const saveTeacherAttendance = async (input: {
     },
   );
 
+  return response.data;
+};
+
+export const cancelTeacherTimeSlot = async (
+  slotId: string,
+  input: { date: string; reason: string },
+) => {
+  const session = authService.getStoredSession();
+  if (!session) {
+    throw new Error('Session introuvable.');
+  }
+  const response = await request<{ data: any }>(
+    `/api/teacher/schedule/${slotId}/cancellations`,
+    session.accessToken,
+    {
+      method: 'POST',
+      body: JSON.stringify(input),
+    },
+  );
   return response.data;
 };

@@ -32,6 +32,8 @@ export const attendanceService = {
     teacherId: string;
     date: string;
     subjectId?: string;
+    startTime?: string;
+    endTime?: string;
     entries: Array<{
       studentId: string;
       status: "PRESENT" | "ABSENT" | "LATE";
@@ -44,23 +46,34 @@ export const attendanceService = {
       throw new AttendanceError("Classe introuvable.");
     }
 
-    for (const entry of input.entries) {
-      const student = await schoolRepository.getStudentGrades(entry.studentId);
+    const notifications = [];
+
+    for (const record of result.records) {
+      const student = await schoolRepository.getStudentGrades(record.studentId);
       if (!student) {
         continue;
       }
 
-      await notificationsService.notifyAttendanceRecorded({
-        studentId: entry.studentId,
+      const notification = await notificationsService.notifyAttendanceRecorded({
+        studentId: record.studentId,
         studentFirstName: student.student.firstName,
         studentLastName: student.student.lastName,
         date: input.date,
-        status: entry.status,
-        minutesLate: entry.minutesLate,
-        reason: entry.reason,
+        status: record.status as "PRESENT" | "ABSENT" | "LATE",
+        minutesLate: record.minutesLate,
+        reason: record.reason,
+      });
+      notifications.push({
+        studentId: record.studentId,
+        studentName: `${student.student.firstName} ${student.student.lastName}`,
+        ...notification,
       });
     }
 
-    return result;
+    return {
+      ...result,
+      notifications,
+      notificationsSent: notifications.reduce((sum, item) => sum + item.sent, 0),
+    };
   },
 };

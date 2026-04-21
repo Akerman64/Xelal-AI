@@ -1,6 +1,7 @@
 import { schoolRepository } from "../core/school-repository";
 import { notificationsService } from "../notifications/service";
 import { teacherService } from "../teacher/service";
+import { getPrismaClient, isPrismaEnabled } from "../../lib/prisma";
 
 export class AcademicsError extends Error {
   statusCode: number;
@@ -62,8 +63,30 @@ export const academicsService = {
     type: "QUIZ" | "HOMEWORK" | "EXAM" | "PROJECT";
     coefficient: number;
     date: string;
+    lessonIds?: string[];
   }) {
     try {
+      if (isPrismaEnabled()) {
+        const prisma = getPrismaClient();
+        const teacherProfile = await prisma!.teacher.findUnique({
+          where: { userId: input.teacherId },
+          select: { id: true },
+        });
+        if (!teacherProfile) {
+          throw new AcademicsError("Profil enseignant introuvable.", 404);
+        }
+        const assignment = await prisma!.teacherAssignment.findFirst({
+          where: {
+            teacherId: teacherProfile.id,
+            classId: input.classId,
+            subjectId: input.subjectId,
+          },
+        });
+        if (!assignment) {
+          throw new AcademicsError("Vous ne pouvez créer une évaluation que pour une matière affectée.", 403);
+        }
+      }
+
       const assessment = await schoolRepository.createAssessment(input);
       if (!assessment) {
         throw new AcademicsError("Classe ou matiere introuvable.");

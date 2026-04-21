@@ -57,6 +57,7 @@ export interface AdminAssignmentRecord {
   className: string;
   subjectId: string;
   subjectName: string;
+  coefficient: number;
 }
 
 export interface AdminOverview {
@@ -135,6 +136,77 @@ export interface AdminClassReport {
   recommendations: string[];
 }
 
+export interface AdminAcademicActivity {
+  recentGrades: Array<{
+    id: string;
+    studentName: string;
+    className: string;
+    subjectName: string;
+    assessmentTitle: string;
+    value: number;
+    updatedAt: string;
+  }>;
+  recentAttendance: Array<{
+    id: string;
+    className: string;
+    subjectName: string;
+    date: string;
+    present: number;
+    absent: number;
+    late: number;
+    absentStudents: Array<{ studentName: string; status: string; reason?: string }>;
+  }>;
+}
+
+export interface AdminAcademicStatistics {
+  grades: Array<{
+    id: string;
+    value: number;
+    comment: string;
+    updatedAt: string;
+    studentId: string;
+    studentName: string;
+    classId: string;
+    className: string;
+    subjectId: string;
+    subjectName: string;
+    teacherId: string;
+    assessmentId: string;
+    assessmentTitle: string;
+    assessmentType: string;
+    assessmentDate: string;
+    coefficient: number;
+    lessons: Array<{ id: string; title: string; orderIndex: number }>;
+    timeSlots: Array<{ id: string; day: WeekDay; startTime: string; endTime: string; room: string }>;
+  }>;
+  teachers: Array<{
+    id: string;
+    name: string;
+    subjects: Array<{ classId: string; className: string; subjectId: string; subjectName: string; coefficient: number }>;
+  }>;
+  lessons: Array<{
+    id: string;
+    title: string;
+    description: string;
+    objectives: string;
+    orderIndex: number;
+    classId: string;
+    className: string;
+    subjectId: string;
+    subjectName: string;
+    teacherId: string;
+  }>;
+  recommendations: Array<{
+    id: string;
+    scope: 'STUDENT' | 'CLASS';
+    targetName: string;
+    className: string;
+    riskLevel?: string;
+    summary: string;
+    createdAt: string;
+  }>;
+}
+
 export type WeekDay = 'Lundi' | 'Mardi' | 'Mercredi' | 'Jeudi' | 'Vendredi' | 'Samedi';
 
 export interface AdminTimeSlotRecord {
@@ -149,6 +221,7 @@ export interface AdminTimeSlotRecord {
   startTime: string;
   endTime: string;
   room: string | null;
+  cancellations?: Array<{ id: string; date: string; reason: string; cancelledBy: string; createdAt: string }>;
 }
 
 export interface AdminParentStudentLinkRecord {
@@ -236,6 +309,24 @@ export const adminService = {
     return response.data;
   },
 
+  async fetchAcademicActivity(session: AuthSession): Promise<AdminAcademicActivity> {
+    const response = await request<{ data: AdminAcademicActivity }>('/api/admin/academic-activity', session);
+    return response.data;
+  },
+
+  async fetchAcademicStatistics(session: AuthSession): Promise<AdminAcademicStatistics> {
+    const response = await request<{ data: AdminAcademicStatistics }>('/api/admin/academic-statistics', session);
+    return response.data;
+  },
+
+  async updateGrade(session: AuthSession, gradeId: string, input: { value: number; comment?: string }) {
+    const response = await request<{ data: any }>(`/api/admin/grades/${gradeId}`, session, {
+      method: 'PATCH',
+      body: JSON.stringify(input),
+    });
+    return response.data;
+  },
+
   async generateClassReport(session: AuthSession, classId: string): Promise<AdminClassReport> {
     const response = await request<{ data: AdminClassReport }>(
       `/api/admin/ai/class-report/${classId}`,
@@ -295,9 +386,9 @@ export const adminService = {
 
   async inviteUser(
     session: AuthSession,
-    input: { schoolId: string; firstName: string; lastName: string; email: string; role: 'ADMIN' | 'TEACHER' | 'STUDENT' | 'PARENT'; classId?: string },
+    input: { schoolId: string; firstName: string; lastName: string; email?: string; phone?: string; role: 'ADMIN' | 'TEACHER' | 'STUDENT' | 'PARENT'; classId?: string },
   ) {
-    const response = await request<{ data: { user: any; invitation: any } }>(
+    const response = await request<{ data: { user: any; invitation: any; emailDelivery: any; whatsappDelivery: any } }>(
       '/api/admin/users/invite',
       session,
       {
@@ -308,7 +399,9 @@ export const adminService = {
 
     return {
       user: toAdminUser(response.data.user),
-      invitation: toInvitation(response.data.invitation),
+      invitation: response.data.invitation ? toInvitation(response.data.invitation) : null,
+      emailDelivery: response.data.emailDelivery as { delivered: boolean; reason?: string } | null,
+      whatsappDelivery: response.data.whatsappDelivery as { delivered: boolean; reason?: string } | null,
     };
   },
 
@@ -345,6 +438,14 @@ export const adminService = {
     );
 
     return toAdminUser(response.data);
+  },
+
+  async deleteUser(session: AuthSession, userId: string): Promise<void> {
+    await request<{ data: { id: string } }>(
+      `/api/admin/users/${userId}`,
+      session,
+      { method: 'DELETE' },
+    );
   },
 
   async resendInvitation(session: AuthSession, invitationId: string) {
@@ -419,7 +520,7 @@ export const adminService = {
 
   async createAssignment(
     session: AuthSession,
-    input: { teacherId: string; classId: string; subjectId: string },
+    input: { teacherId: string; classId: string; subjectId: string; coefficient?: number },
   ): Promise<AdminAssignmentRecord> {
     const response = await request<{ data: AdminAssignmentRecord }>(
       '/api/admin/assignments',
@@ -435,6 +536,24 @@ export const adminService = {
       session,
       { method: 'DELETE' },
     );
+  },
+
+  async fetchEnrollments(session: AuthSession, classId?: string): Promise<{ id: string; studentId: string; studentName: string; classId: string; className: string; status: string }[]> {
+    const url = classId ? `/api/admin/enrollments?classId=${encodeURIComponent(classId)}` : '/api/admin/enrollments';
+    const response = await request<{ data: any[] }>(url, session);
+    return response.data;
+  },
+
+  async createEnrollment(session: AuthSession, input: { studentId: string; classId: string }): Promise<{ id: string; studentId: string; studentName: string; classId: string; className: string; status: string }> {
+    const response = await request<{ data: any }>('/api/admin/enrollments', session, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+    return response.data;
+  },
+
+  async deleteEnrollment(session: AuthSession, enrollmentId: string): Promise<void> {
+    await request<{ data: { id: string } }>(`/api/admin/enrollments/${enrollmentId}`, session, { method: 'DELETE' });
   },
 
   async fetchTimeSlots(session: AuthSession, classId?: string): Promise<AdminTimeSlotRecord[]> {
@@ -465,5 +584,40 @@ export const adminService = {
 
   async deleteTimeSlot(session: AuthSession, slotId: string): Promise<void> {
     await request<{ data: { id: string } }>(`/api/admin/schedule/${slotId}`, session, { method: 'DELETE' });
+  },
+
+  async cancelTimeSlot(session: AuthSession, slotId: string, input: { date: string; reason: string }) {
+    const response = await request<{ data: any }>(`/api/admin/schedule/${slotId}/cancellations`, session, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+    return response.data;
+  },
+
+  async analyzeAdmin(
+    session: AuthSession,
+    input: {
+      classId: string;
+      studentId?: string;
+      subjectId?: string;
+      subjectName?: string;
+      extraPrompt?: string;
+    },
+  ): Promise<{
+    scope: 'student' | 'class';
+    summary: string;
+    riskLevel: 'low' | 'medium' | 'high' | 'critical';
+    recommendations: string[];
+    explanation: string;
+    subjectFilter?: string;
+    whatsappMessage?: string;
+    studentsAtRisk?: string[];
+    source: string;
+  }> {
+    const response = await request<{ data: any }>('/api/admin/analyze', session, {
+      method: 'POST',
+      body: JSON.stringify(input),
+    });
+    return response.data;
   },
 };

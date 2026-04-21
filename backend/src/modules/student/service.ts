@@ -1,5 +1,6 @@
-import { GoogleGenAI } from "@google/genai";
-import { env } from "../../config/env";
+import { callAiJson, isAiAvailable } from "../../lib/ai";
+import { getPrismaClient, isPrismaEnabled } from "../../lib/prisma";
+import { devStore } from "../core/dev-store";
 import { schoolRepository } from "../core/school-repository";
 
 export class StudentError extends Error {
@@ -10,17 +11,6 @@ export class StudentError extends Error {
     this.statusCode = statusCode;
   }
 }
-
-let aiInstance: GoogleGenAI | null = null;
-
-const getAI = () => {
-  const apiKey = process.env.GEMINI_API_KEY || env.openAiApiKey;
-  if (!apiKey) return null;
-  if (!aiInstance) {
-    aiInstance = new GoogleGenAI({ apiKey });
-  }
-  return aiInstance;
-};
 
 const average = (values: number[]) =>
   values.length
@@ -85,8 +75,7 @@ export const studentService = {
       latestAttendance: attendance.records.slice(0, 6),
     };
 
-    const ai = getAI();
-    if (!ai) {
+    if (!isAiAvailable()) {
       return {
         answer: buildFallbackStudentAnswer({
           studentFirstName: grades.student.firstName,
@@ -106,6 +95,12 @@ export const studentService = {
       Contexte réel de l'élève: ${JSON.stringify(context)}
       Question de l'élève: ${question}
 
+      Règles obligatoires:
+      - Tu ne dois jamais créer, deviner, compléter ou arrondir une information.
+      - Tu peux citer uniquement les notes, moyennes, matières, absences, retards et dates présents dans le contexte réel.
+      - Si une donnée n'est pas présente dans le contexte, dis qu'elle n'est pas encore enregistrée.
+      - Tu ne dois pas dire qu'une performance, une assiduité ou une tendance est bonne, mauvaise, en hausse ou en baisse sans valeur réelle du contexte.
+
       Réponds en français simple, avec:
       1. une réponse claire et motivante
       2. 2 ou 3 actions concrètes à faire
@@ -118,15 +113,7 @@ export const studentService = {
     `;
 
     try {
-      const response = await ai.models.generateContent({
-        model: "gemini-3-flash-preview",
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-        },
-      });
-
-      const parsed = JSON.parse(response.text || "{}");
+      const parsed = await callAiJson<{ answer?: string }>(prompt);
       return {
         answer:
           typeof parsed.answer === "string" && parsed.answer.trim()
@@ -156,5 +143,82 @@ export const studentService = {
         generatedAt: new Date().toISOString(),
       };
     }
+  },
+
+  async getSchedule(studentId: string) {
+    if (!isPrismaEnabled()) {
+      // En dev-store : chercher la classId de l'élève
+      const user = devStore.users.find((u) => u.id === studentId);
+      const classId = user?.classId;
+      if (!classId) return [];
+
+      const slots = devStore.timeSlots.filter((s) => s.classId === classId);
+      const dayOrder = ["Lundi", "Mardi", "Mercredi", "Jeudi", "Vendredi", "Samedi"];
+      slots.sort((a, b) => {
+        const di = dayOrder.indexOf(a.day) - dayOrder.indexOf(b.day);
+        return di !== 0 ? di : a.startTime.localeCompare(b.startTime);
+      });
+
+      return slots.map((slot) => {
+        const cls = devStore.classes.find((c) => c.id === slot.classId);
+        const subject = devStore.subjects.find((s) => s.id === slot.subjectId);
+        const teacher = devStore.users.find((u) => u.id === slot.teacherId);
+        return {
+          id: slot.id,
+          classId: slot.classId,
+          className: cls?.name ?? slot.classId,
+          subjectId: slot.subjectId,
+          subjectName: subject?.name ?? slot.subjectId,
+          teacherName: teacher ? `${teacher.firstName} ${teacher.lastName}` : "",
+          day: slot.day,
+          startTime: slot.startTime,
+          endTime: slot.endTime,
+          room: slot.room ?? "",
+        };
+      });
+    }
+
+    const prisma = getPrismaClient();
+
+    // Trouver la classe active de l'élève (via enrollment ou studentId direct)
+    const student = await prisma!.student.findFirst({
+      where: { OR: [{ id: studentId }, { userId: studentId }] },
+      include: {
+        enrollments: {
+          where: { status: "ACTIVE" },
+          orderBy: { academicYearId: "desc" },
+          take: 1,
+        },
+      },
+    });
+
+    const classId = student?.enrollments[0]?.classId;
+    if (!classId) return [];
+
+    const slots = await prisma!.timeSlot.findMany({
+      where: { classId },
+      include: { subject: true, class: true },
+      orderBy: [{ day: "asc" }, { startTime: "asc" }],
+    });
+
+    // Résoudre le nom de l'enseignant
+    const teacherIds = [...new Set(slots.map((s) => s.teacherId))];
+    const teachers = teacherIds.length
+      ? await prisma!.user.findMany({ where: { id: { in: teacherIds } } })
+      : [];
+    const teacherMap = new Map(teachers.map((t) => [t.id, `${t.firstName} ${t.lastName}`]));
+
+    return slots.map((slot) => ({
+      id: slot.id,
+      classId: slot.classId,
+      className: slot.class.name,
+      subjectId: slot.subjectId,
+      subjectName: slot.subject.name,
+      teacherName: teacherMap.get(slot.teacherId) ?? "",
+      day: slot.day as string,
+      startTime: slot.startTime,
+      endTime: slot.endTime,
+      room: slot.room ?? "",
+    }));
   },
 };

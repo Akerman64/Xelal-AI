@@ -63,7 +63,7 @@ academicsRouter.get("/students/:studentId/grades", (req, res) => {
 academicsRouter.post("/assessments", (req, res) => {
   Promise.resolve()
     .then(async () => {
-      const { classId, subjectId, teacherId, title, type, coefficient, date } = req.body ?? {};
+      const { classId, subjectId, teacherId, title, type, coefficient, date, lessonIds } = req.body ?? {};
 
       if (!classId || !subjectId || !teacherId || !title || !type || !date) {
         return res.status(400).json({ error: "Payload d'evaluation incomplet." });
@@ -78,6 +78,7 @@ academicsRouter.post("/assessments", (req, res) => {
           type,
           coefficient: Number(coefficient ?? 1),
           date,
+          lessonIds: Array.isArray(lessonIds) ? lessonIds.map(String) : undefined,
         }),
       });
     })

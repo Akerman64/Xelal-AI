@@ -55,3 +55,22 @@ whatsappRouter.post("/simulate", requireAuth, requireRole("ADMIN", "TEACHER"), (
       return res.status(400).json({ error: message });
     });
 });
+
+whatsappRouter.post("/preview-reply", (req, res) => {
+  Promise.resolve()
+    .then(async () => {
+      const message = typeof req.body?.message === "string" ? req.body.message : "";
+      const studentName = typeof req.body?.studentName === "string" ? req.body.studentName : undefined;
+      if (!message.trim()) {
+        return res.status(400).json({ error: "message est obligatoire." });
+      }
+      return res.status(200).json({
+        data: await whatsappService.previewReply({ message: message.trim(), studentName }),
+      });
+    })
+    .catch((error) => {
+      const message =
+        error instanceof Error ? error.message : "Prévisualisation WhatsApp impossible.";
+      return res.status(400).json({ error: message });
+    });
+});

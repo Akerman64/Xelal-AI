@@ -87,6 +87,8 @@ export interface DevAttendanceSession {
   teacherId: string;
   subjectId?: string;
   date: string;
+  startTime?: string;
+  endTime?: string;
 }
 
 export interface DevAttendanceRecord {
@@ -103,6 +105,15 @@ export interface DevTeacherAssignment {
   teacherId: string;
   classId: string;
   subjectId: string;
+  coefficient?: number;
+}
+
+export interface DevParentStudentLink {
+  id: string;
+  parentUserId: string;
+  studentId: string;
+  relationship: "MOTHER" | "FATHER" | "TUTOR";
+  isPrimary: boolean;
 }
 
 export interface DevMessage {
@@ -175,6 +186,7 @@ const attendanceSessions: DevAttendanceSession[] = [];
 const attendanceRecords: DevAttendanceRecord[] = [];
 const messages: DevMessage[] = [];
 const timeSlots: DevTimeSlot[] = [];
+const parentStudentLinks: DevParentStudentLink[] = [];
 
 export const devStore = {
   schools,
@@ -190,6 +202,7 @@ export const devStore = {
   attendanceRecords,
   messages,
   timeSlots,
+  parentStudentLinks,
 };
 
 export const publicUser = (user: DevUser) => ({

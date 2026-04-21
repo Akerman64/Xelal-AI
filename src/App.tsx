@@ -10,8 +10,7 @@ import {
   UserCircle, 
   MessageCircle,
   School,
-  ArrowRight,
-  LogOut
+  ArrowRight
 } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 import DashboardEnseignant from './components/DashboardEnseignant';
@@ -25,6 +24,10 @@ import { AuthSession, Role } from './types';
 export default function App() {
   const [role, setRole] = useState<Role | null>(null);
   const [session, setSession] = useState<AuthSession | null>(() => authService.getStoredSession());
+  const handleLogout = () => {
+    authService.clearSession();
+    setSession(null);
+  };
 
   const canAccessSelectedPortal = useMemo(() => {
     if (!role || !session) return false;
@@ -63,8 +66,7 @@ export default function App() {
                 {session.user.firstName} {session.user.lastName} ({session.user.role})
                 <button
                   onClick={() => {
-                    authService.clearSession();
-                    setSession(null);
+                    handleLogout();
                   }}
                   className="ml-3 rounded-xl bg-bg px-3 py-2 text-xs font-bold text-text-main hover:bg-border/40"
                 >
@@ -115,27 +117,6 @@ export default function App() {
 
   return (
     <div className="relative h-screen bg-white">
-      {session && (
-        <div className="fixed left-6 top-6 z-[110] flex items-center gap-3 rounded-2xl border border-border bg-white/95 px-4 py-3 shadow-xl backdrop-blur">
-          <div>
-            <p className="text-[10px] font-bold uppercase tracking-widest text-text-muted">Session</p>
-            <p className="text-sm font-bold text-text-main">
-              {session.user.firstName} {session.user.lastName}
-            </p>
-          </div>
-          <button
-            onClick={() => {
-              authService.clearSession();
-              setSession(null);
-            }}
-            className="flex items-center gap-2 rounded-xl bg-bg px-3 py-2 text-xs font-bold text-text-main hover:bg-border/40"
-          >
-            <LogOut size={14} />
-            Déconnexion
-          </button>
-        </div>
-      )}
-
       {/* Mini Role Switcher FAB for demo purposes */}
       <button 
         onClick={() => setRole(null)}
@@ -162,9 +143,9 @@ export default function App() {
               onAuthenticated={(nextSession) => setSession(nextSession)}
             />
           )}
-          {role === 'teacher' && canAccessSelectedPortal && <DashboardEnseignant session={session || undefined} />}
-          {role === 'admin' && canAccessSelectedPortal && <DashboardAdmin session={session || undefined} />}
-          {role === 'student' && canAccessSelectedPortal && <DashboardEleve session={session || undefined} />}
+          {role === 'teacher' && canAccessSelectedPortal && <DashboardEnseignant session={session || undefined} onLogout={handleLogout} />}
+          {role === 'admin' && canAccessSelectedPortal && <DashboardAdmin session={session || undefined} onLogout={handleLogout} />}
+          {role === 'student' && canAccessSelectedPortal && <DashboardEleve session={session || undefined} onLogout={handleLogout} />}
           {role === 'parent' && (
             <div className="flex items-center justify-center h-full bg-gray-100 p-4">
               <div className="w-full max-w-md h-[800px] border-[12px] border-gray-800 rounded-[3rem] overflow-hidden shadow-2xl bg-white">
